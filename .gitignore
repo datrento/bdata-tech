@@ -1,0 +1,62 @@
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
+
+# PyCharm
+.idea/
+
+# Copilot logs
+copilot*.log
+
+# macOS files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux temp files
+*~
+
+# Python packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Test & coverage
+htmlcov/
+.tox/
+coverage.xml
+.pytest_cache/
+.cache/
+*.cover
+*.log
+
+# Mypy / pylint / pytype
+.mypy_cache/
+.dmypy.json
+.pyre/
+
+# dotenv files
+.env
+.env.*
