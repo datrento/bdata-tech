@@ -1,0 +1,4 @@
+# requirements.txt
+pandas>=1.0.0
+numpy>=1.18.0
+faker>=8.0.0
