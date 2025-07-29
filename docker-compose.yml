@@ -1,0 +1,132 @@
+version: '3.8'
+ 
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:6.0
+    container_name: price_intelligence_mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: price_intelligence
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./scripts/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    networks:
+      - price_intelligence_network
+
+  # Kafka and Zookeeper
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: price_intelligence_zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - price_intelligence_network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: price_intelligence_kafka
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - price_intelligence_network
+
+  # Kafka UI (optional)
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: price_intelligence_kafka_ui
+    restart: unless-stopped
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - price_intelligence_network
+
+  # Main Application
+  price_intelligence_app:
+    build: .
+    container_name: price_intelligence_app
+    restart: unless-stopped
+    depends_on:
+      - mongodb
+      - kafka
+    ports:
+      - "8050:8050"
+    environment:
+      - MONGODB_URI=mongodb://admin:password@mongodb:27017/
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - PYTHONPATH=/app
+    volumes:
+      - ./logs:/app/logs
+      - ./models:/app/models
+      - ./data:/app/data
+    networks:
+      - price_intelligence_network
+    command: ["python", "main.py", "--demo"]
+
+  # PostgreSQL (optional, for additional analytics)
+  postgresql:
+    image: postgres:15
+    container_name: price_intelligence_postgresql
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: price_intelligence
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgresql_data:/var/lib/postgresql/data
+    networks:
+      - price_intelligence_network
+
+  # Redis (optional, for caching)
+  redis:
+    image: redis:7-alpine
+    container_name: price_intelligence_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - price_intelligence_network
+
+volumes:
+  mongodb_data:
+    driver: local
+  kafka_data:
+    driver: local
+  postgresql_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  price_intelligence_network:
+    driver: bridge 

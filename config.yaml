@@ -1,0 +1,125 @@
+# E-commerce Price Intelligence System Configuration
+
+# Kafka Configuration
+kafka:
+  bootstrap_servers: "localhost:9092"
+  topics:
+    price_updates: "price-updates"
+    competitor_data: "competitor-data"
+    user_behavior: "user-behavior"
+    price_alerts: "price-alerts"
+  consumer_group: "price-intelligence-group"
+
+# Database Configuration
+database:
+  mongodb:
+    uri: "mongodb://localhost:27017/"
+    database: "price_intelligence"
+    collections:
+      products: "products"
+      competitor_prices: "competitor_prices"
+      price_history: "price_history"
+      user_behavior: "user_behavior"
+      pricing_decisions: "pricing_decisions"
+  
+  postgresql:
+    host: "localhost"
+    port: 5432
+    database: "price_intelligence"
+    user: "postgres"
+    password: "password"
+
+# Spark Configuration
+spark:
+  app_name: "PriceIntelligence"
+  master: "local[*]"
+  config:
+    spark.sql.adaptive.enabled: true
+    spark.sql.adaptive.coalescePartitions.enabled: true
+    spark.sql.adaptive.skewJoin.enabled: true
+
+# E-commerce Platforms to Monitor
+platforms:
+  - name: "amazon"
+    base_url: "https://www.amazon.com"
+    selectors:
+      price: ".a-price-whole"
+      title: "#productTitle"
+      availability: "#availability"
+  
+  - name: "ebay"
+    base_url: "https://www.ebay.com"
+    selectors:
+      price: ".x-price-primary"
+      title: ".x-item-title"
+      availability: ".x-item-condition"
+  
+  - name: "walmart"
+    base_url: "https://www.walmart.com"
+    selectors:
+      price: "[data-price-type='finalPrice']"
+      title: ".prod-ProductTitle"
+      availability: ".prod-ProductOffer"
+
+# Dynamic Pricing Algorithm
+pricing:
+  update_frequency_minutes: 15
+  min_price_margin: 0.05  # 5% minimum margin
+  max_price_margin: 0.30  # 30% maximum margin
+  competitor_weight: 0.4
+  demand_weight: 0.3
+  inventory_weight: 0.2
+  seasonality_weight: 0.1
+  
+  # ML Model Parameters
+  model:
+    type: "xgboost"
+    retrain_frequency_hours: 24
+    features:
+      - "competitor_avg_price"
+      - "competitor_min_price"
+      - "competitor_max_price"
+      - "demand_score"
+      - "inventory_level"
+      - "seasonality_factor"
+      - "time_of_day"
+      - "day_of_week"
+
+# Data Collection
+data_collection:
+  scraping:
+    delay_between_requests: 2  # seconds
+    max_retries: 3
+    timeout: 30
+    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  
+  products:
+    categories:
+      - "electronics"
+      - "clothing"
+      - "home_garden"
+      - "sports"
+      - "books"
+    max_products_per_category: 1000
+
+# Dashboard Configuration
+dashboard:
+  host: "0.0.0.0"
+  port: 8050
+  debug: false
+  refresh_interval_seconds: 30
+
+# Alerting
+alerts:
+  price_change_threshold: 0.10  # 10% price change
+  competitor_price_drop_threshold: 0.15  # 15% competitor price drop
+  low_inventory_threshold: 10  # units
+  email_notifications: false
+  slack_webhook: ""
+
+# Logging
+logging:
+  level: "INFO"
+  file: "logs/price_intelligence.log"
+  max_size_mb: 100
+  backup_count: 5 
