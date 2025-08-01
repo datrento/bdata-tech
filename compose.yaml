@@ -1,14 +1,13 @@
 services:
   kafka:
     image: apache/kafka:3.8.0  # Pin specific version instead of latest
-    hostname: kafka
     container_name: kafka-broker
     ports:
       - "9092:9092"
     environment:
       # Configure listeners for both docker and host communication
       KAFKA_LISTENERS: CONTROLLER://kafka:9091,HOST://0.0.0.0:9092,DOCKER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:9092,DOCKER://kafka:9093
+      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:9092,DOCKER://${KAFKA_BOOTSTRAP_SERVER}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,DOCKER:PLAINTEXT,HOST:PLAINTEXT
 
       # Settings required for KRaft mode
@@ -73,9 +72,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: price_intelligence
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_HOST_AUTH_METHOD: trust # Allow connections without password for local development
       POSTGRES_PORT: 5432  # Specify the port for PostgreSQL
     volumes:
@@ -94,12 +93,17 @@ services:
     networks:
       - common-network
 
-# adminer:
-#   image: adminer
-#   container_name: adminer
-#   restart: always
-#   ports:
-#     - 8050:8050
+  adminer:
+    image: adminer
+    container_name: adminer
+    restart: always
+    ports:
+      - 8050:8080
+    depends_on:
+      postgres:
+        condition: service_healthy  # Wait for PostgreSQL to be healthy
+    networks:
+      - common-network
 
 volumes:
   kafka-data:
