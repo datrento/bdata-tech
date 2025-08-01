@@ -36,6 +36,11 @@ Icon?
 # Linux temp files
 *~
 
+# Windows files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
 # Python packaging
 build/
 dist/
