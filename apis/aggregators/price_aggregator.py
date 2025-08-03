@@ -72,7 +72,7 @@ async def fetch_competitor_price(competitor: str, sku: str) -> Optional[SimplePr
 
 async def simulate_external_aggregator_data(aggregator: str, product_sku: str) -> Dict:
     """
-    Simulate external price aggregator data
+    Simulate external price aggregator data - RAW DATA ONLY
     In production: Replace with actual web scraping or API calls to PriceGrabber, Shopping.com, etc.
     """
     base_prices = {
@@ -83,36 +83,32 @@ async def simulate_external_aggregator_data(aggregator: str, product_sku: str) -
     
     base_price = base_prices.get(product_sku, 500.00)
     
-    # Different aggregators have different characteristics and coverage
-    aggregator_profiles = {
-        "PriceGrabber": {"variance": 0.15, "stores": (15, 30), "confidence": 0.85},
-        "Shopping.com": {"variance": 0.20, "stores": (20, 40), "confidence": 0.80},
-        "Google Shopping": {"variance": 0.10, "stores": (50, 100), "confidence": 0.95},
-        "Nextag": {"variance": 0.25, "stores": (10, 25), "confidence": 0.75},
-        "BizRate": {"variance": 0.18, "stores": (8, 20), "confidence": 0.78}
+    # Different aggregators have different store coverage (raw data)
+    store_ranges = {
+        "PriceGrabber": (15, 30),
+        "Shopping.com": (20, 40), 
+        "Google Shopping": (50, 100)
     }
     
-    profile = aggregator_profiles.get(aggregator, {"variance": 0.15, "stores": (10, 30), "confidence": 0.80})
+    stores_range = store_ranges.get(aggregator, (10, 30))
+    stores_tracked = random.randint(*stores_range)
     
-    # Simulate price range from aggregator
-    variance = profile["variance"]
-    min_price = base_price * (1 - variance)
-    max_price = base_price * (1 + variance)
+    # Simulate realistic price ranges (what aggregators actually report)
+    price_variance = random.uniform(0.10, 0.25)  # 10-25% variance is realistic
+    min_price = round(base_price * (1 - price_variance), 2)
+    max_price = round(base_price * (1 + price_variance), 2)
     avg_price = round(random.uniform(min_price, max_price), 2)
     
-    stores_tracked = random.randint(*profile["stores"])
-    
+    # Return RAW DATA ONLY 
     return {
         "aggregator": aggregator,
         "available": random.choice([True] * 8 + [False] * 2),  # 80% availability
         "avg_price": avg_price,
         "price_range": {
-            "min": round(min_price, 2),
-            "max": round(max_price, 2)
+            "min": min_price,
+            "max": max_price
         },
         "stores_tracked": stores_tracked,
-        "trend": random.choice(["increasing", "decreasing", "stable"]),
-        "confidence_score": profile["confidence"],
         "last_updated": (datetime.now() - timedelta(minutes=random.randint(5, 60))).isoformat()
     }
 
@@ -137,25 +133,14 @@ async def simulate_user_behavior_signals(product_sku: str) -> Dict:
     purchases = int(cart_adds * random.uniform(0.15, 0.35))
     price_comparisons = int(page_views * random.uniform(0.1, 0.3))
     
-    # Calculate demand indicators
-    conversion_rate = purchases / page_views if page_views > 0 else 0
-    cart_abandonment = (cart_adds - purchases) / cart_adds if cart_adds > 0 else 0
-    price_sensitivity = price_comparisons / page_views if page_views > 0 else 0
-    
+    # Return RAW DATA ONLY - no calculated indicators
+    # Conversion rates, abandonment rates, etc. should be calculated downstream
     return {
-        "daily_metrics": {
-            "page_views": page_views,
-            "searches": searches,
-            "cart_additions": cart_adds,
-            "purchases": purchases,
-            "price_comparisons": price_comparisons
-        },
-        "demand_indicators": {
-            "conversion_rate": round(conversion_rate, 4),
-            "cart_abandonment_rate": round(cart_abandonment, 4),
-            "price_sensitivity_score": round(price_sensitivity, 4),
-            "demand_surge": "high" if page_views > daily_base * 1.2 else "normal"
-        },
+        "page_views": page_views,
+        "searches": searches,
+        "cart_additions": cart_adds,
+        "purchases": purchases,
+        "price_comparisons": price_comparisons,
         "timestamp": datetime.now().isoformat()
     }
 
