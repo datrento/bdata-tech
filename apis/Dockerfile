@@ -18,9 +18,5 @@ COPY apis/ .
 # Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=2 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
 # Use uvicorn directly for better performance
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

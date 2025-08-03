@@ -10,6 +10,11 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from models import SimplePriceResponse, ProductMapping
 
+# Import competitor modules directly for better performance
+from competitors.amazon import get_amazon_price
+from competitors.ebay import get_ebay_price
+from competitors.bestbuy import get_bestbuy_price
+
 router = APIRouter()
 
 # Essential product catalog
@@ -46,12 +51,23 @@ EXTERNAL_PRICE_AGGREGATORS = [
 ]
 
 async def fetch_competitor_price(competitor: str, sku: str) -> Optional[SimplePriceResponse]:
-    """Fetch price from direct e-commerce competitor API"""
+    """Fetch price from direct e-commerce competitor - now using direct function calls"""
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            response = await client.get(f"http://localhost:8000/api/{competitor}/price/{sku}")
-            return SimplePriceResponse(**response.json()) if response.status_code == 200 else None
-    except Exception:
+        if competitor == "amazon":
+            return await get_amazon_price(sku)
+        elif competitor == "ebay":
+            return await get_ebay_price(sku)
+        elif competitor == "bestbuy":
+            return await get_bestbuy_price(sku)
+        else:
+            print(f"Unknown competitor: {competitor}")
+            return None
+    except HTTPException as e:
+        # Product not found in competitor's catalog
+        print(f"Product {sku} not found in {competitor}: {e.detail}")
+        return None
+    except Exception as e:
+        print(f"Error fetching {competitor} price for {sku}: {e}")
         return None
 
 async def simulate_external_aggregator_data(aggregator: str, product_sku: str) -> Dict:

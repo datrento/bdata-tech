@@ -45,6 +45,7 @@ case "$1" in
     # echo "Dashboard: http://$(grep STREAMLIT_HOST .env | cut -d= -f2):$(grep STREAMLIT_PORT .env | cut -d= -f2)"
     echo "Kafka UI: http://$(grep KAFKA_UI_HOST .env | cut -d= -f2):$(grep KAFKA_UI_PORT .env | cut -d= -f2)"
     echo "Adminer UI: http://$(grep ADMINER_HOST .env | cut -d= -f2):$(grep ADMINER_PORT .env | cut -d= -f2)"
+    echo "Data API: http://$(grep DATA_API_HOST .env | cut -d= -f2):$(grep DATA_API_PORT .env | cut -d= -f2)/docs"
     ;;
   stop|down)
     echo "Stopping services..."
