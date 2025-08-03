@@ -1,0 +1,199 @@
+"""
+Comprehensive Price Aggregator - Big Data Price Intelligence System
+Core purpose: Aggregate data from e-commerce platforms, external price aggregators, and user behavior
+Provides market intelligence for ML-driven dynamic pricing decisions
+"""
+from fastapi import APIRouter, HTTPException
+import httpx
+import random
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+from models import SimplePriceResponse, ProductMapping
+
+router = APIRouter()
+
+# Essential product catalog
+PRODUCT_CATALOG = {
+    "IPHONE-15-PRO-128": ProductMapping(
+        universal_sku="IPHONE-15-PRO-128",
+        amazon_asin="B09B8RJWXX",
+        ebay_item_id="334567890123", 
+        bestbuy_sku="6418599",
+        title="Apple iPhone 15 Pro 128GB",
+        category="Smartphones"
+    ),
+    "MACBOOK-AIR-M2-13": ProductMapping(
+        universal_sku="MACBOOK-AIR-M2-13",
+        amazon_asin="B08C1W5N87",
+        ebay_item_id="334567890124",
+        bestbuy_sku="6509650", 
+        title="Apple MacBook Air M2 13-inch",
+        category="Laptops"
+    ),
+    "PS5-CONSOLE": ProductMapping(
+        universal_sku="PS5-CONSOLE",
+        amazon_asin="B0BZKCBWQY",
+        ebay_item_id="334567890125",
+        bestbuy_sku="6426149",
+        title="Sony PlayStation 5 Console", 
+        category="Gaming"
+    )
+}
+
+# External price aggregators (as per project description)
+EXTERNAL_PRICE_AGGREGATORS = [
+    "PriceGrabber", "Shopping.com", "Google Shopping"
+]
+
+async def fetch_competitor_price(competitor: str, sku: str) -> Optional[SimplePriceResponse]:
+    """Fetch price from direct e-commerce competitor API"""
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            response = await client.get(f"http://localhost:8000/api/{competitor}/price/{sku}")
+            return SimplePriceResponse(**response.json()) if response.status_code == 200 else None
+    except Exception:
+        return None
+
+async def simulate_external_aggregator_data(aggregator: str, product_sku: str) -> Dict:
+    """
+    Simulate external price aggregator data
+    In production: Replace with actual web scraping or API calls to PriceGrabber, Shopping.com, etc.
+    """
+    base_prices = {
+        "IPHONE-15-PRO-128": 999.99,
+        "MACBOOK-AIR-M2-13": 1199.99,
+        "PS5-CONSOLE": 499.99
+    }
+    
+    base_price = base_prices.get(product_sku, 500.00)
+    
+    # Different aggregators have different characteristics and coverage
+    aggregator_profiles = {
+        "PriceGrabber": {"variance": 0.15, "stores": (15, 30), "confidence": 0.85},
+        "Shopping.com": {"variance": 0.20, "stores": (20, 40), "confidence": 0.80},
+        "Google Shopping": {"variance": 0.10, "stores": (50, 100), "confidence": 0.95},
+        "Nextag": {"variance": 0.25, "stores": (10, 25), "confidence": 0.75},
+        "BizRate": {"variance": 0.18, "stores": (8, 20), "confidence": 0.78}
+    }
+    
+    profile = aggregator_profiles.get(aggregator, {"variance": 0.15, "stores": (10, 30), "confidence": 0.80})
+    
+    # Simulate price range from aggregator
+    variance = profile["variance"]
+    min_price = base_price * (1 - variance)
+    max_price = base_price * (1 + variance)
+    avg_price = round(random.uniform(min_price, max_price), 2)
+    
+    stores_tracked = random.randint(*profile["stores"])
+    
+    return {
+        "aggregator": aggregator,
+        "available": random.choice([True] * 8 + [False] * 2),  # 80% availability
+        "avg_price": avg_price,
+        "price_range": {
+            "min": round(min_price, 2),
+            "max": round(max_price, 2)
+        },
+        "stores_tracked": stores_tracked,
+        "trend": random.choice(["increasing", "decreasing", "stable"]),
+        "confidence_score": profile["confidence"],
+        "last_updated": (datetime.now() - timedelta(minutes=random.randint(5, 60))).isoformat()
+    }
+
+async def simulate_user_behavior_signals(product_sku: str) -> Dict:
+    """
+    Simulate user behavior data from your e-commerce platform
+    In production: Replace with actual user analytics data
+    """
+    # Simulate realistic user behavior patterns
+    base_demand = {
+        "IPHONE-15-PRO-128": 1000,
+        "MACBOOK-AIR-M2-13": 600,
+        "PS5-CONSOLE": 800
+    }
+    
+    daily_base = base_demand.get(product_sku, 400)
+    
+    # Add realistic variations
+    page_views = daily_base + random.randint(-100, 200)
+    searches = int(page_views * random.uniform(0.3, 0.7))
+    cart_adds = int(page_views * random.uniform(0.05, 0.15))
+    purchases = int(cart_adds * random.uniform(0.15, 0.35))
+    price_comparisons = int(page_views * random.uniform(0.1, 0.3))
+    
+    # Calculate demand indicators
+    conversion_rate = purchases / page_views if page_views > 0 else 0
+    cart_abandonment = (cart_adds - purchases) / cart_adds if cart_adds > 0 else 0
+    price_sensitivity = price_comparisons / page_views if page_views > 0 else 0
+    
+    return {
+        "daily_metrics": {
+            "page_views": page_views,
+            "searches": searches,
+            "cart_additions": cart_adds,
+            "purchases": purchases,
+            "price_comparisons": price_comparisons
+        },
+        "demand_indicators": {
+            "conversion_rate": round(conversion_rate, 4),
+            "cart_abandonment_rate": round(cart_abandonment, 4),
+            "price_sensitivity_score": round(price_sensitivity, 4),
+            "demand_surge": "high" if page_views > daily_base * 1.2 else "normal"
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+
+@router.get("/data/{universal_sku}")
+async def get_market_data_sources(universal_sku: str):
+    """
+    Data Collection Only: Fetch raw data from all 3 sources
+    1. E-commerce platforms (Amazon, eBay, Best Buy)
+    2. External price aggregators (PriceGrabber, Shopping.com, etc.)
+    3. User behavior signals (page views, purchases, etc.)
+    
+    Returns: Raw data only - no analysis or intelligence calculations
+    """
+    if universal_sku not in PRODUCT_CATALOG:
+        raise HTTPException(status_code=404, detail=f"Product {universal_sku} not found")
+    
+    product = PRODUCT_CATALOG[universal_sku]
+    
+    # 1. FETCH COMPETITOR DATA (real-time)
+    competitors = {}
+    for competitor, sku in [("amazon", product.amazon_asin), ("ebay", product.ebay_item_id), ("bestbuy", product.bestbuy_sku)]:
+        if sku and (price_data := await fetch_competitor_price(competitor, sku)):
+            competitors[competitor] = {
+                "price": price_data.price_amount,
+                "in_stock": price_data.in_stock,
+                "sku": price_data.sku
+            }
+    
+    # 2. FETCH EXTERNAL AGGREGATORS DATA (simulated)
+    aggregators = {}
+    for aggregator in EXTERNAL_PRICE_AGGREGATORS:
+        if (data := await simulate_external_aggregator_data(aggregator, universal_sku)) and data["available"]:
+            aggregators[aggregator] = data
+    
+    # 3. FETCH USER BEHAVIOR DATA (from your platform)
+    user_behavior = await simulate_user_behavior_signals(universal_sku)
+    
+    # Return RAW DATA ONLY - no calculations or analysis
+    return {
+        "product": {
+            "sku": universal_sku,
+            "title": product.title,
+            "category": product.category
+        },
+        "data_sources": {
+            "competitors": competitors,
+            "aggregators": aggregators,
+            "user_behavior": user_behavior
+        },
+        "timestamp": datetime.now().isoformat(),
+        "collection_status": "raw_data_only"
+    }
+
+@router.get("/products")
+async def list_products():
+    """List all products available for price intelligence"""
+    return list(PRODUCT_CATALOG.keys())

@@ -61,7 +61,6 @@ services:
       retries: 3
       start_period: 30s
 
-
   postgres:
     image: postgres
     container_name: postgres-db
@@ -105,6 +104,31 @@ services:
     networks:
       - common-network
 
+  market-data-api:
+    build:
+      context: .
+      dockerfile: apis/Dockerfile
+    container_name: market-data-collection-api
+    ports:
+      - "8000:8000"
+    # No environment variables needed - pure data collection API
+    depends_on:
+      # Only depends on itself to start after infrastructure is ready
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - common-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    volumes:
+      - ./apis:/app  # For development - live reload
+      
 volumes:
   kafka-data:
   postgres_data:
