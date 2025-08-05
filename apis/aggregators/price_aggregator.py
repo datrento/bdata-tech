@@ -7,8 +7,9 @@ from fastapi import APIRouter, HTTPException
 import httpx
 import random
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
-from models import SimplePriceResponse, ProductMapping
+from typing import Dict, Optional
+from models import SimplePriceResponse
+from catalog import PRODUCT_CATALOG
 
 # Import competitor modules directly for better performance
 from competitors.amazon import get_amazon_price
@@ -16,34 +17,6 @@ from competitors.ebay import get_ebay_price
 from competitors.bestbuy import get_bestbuy_price
 
 router = APIRouter()
-
-# Essential product catalog
-PRODUCT_CATALOG = {
-    "IPHONE-15-PRO-128": ProductMapping(
-        universal_sku="IPHONE-15-PRO-128",
-        amazon_asin="B09B8RJWXX",
-        ebay_item_id="334567890123", 
-        bestbuy_sku="6418599",
-        title="Apple iPhone 15 Pro 128GB",
-        category="Smartphones"
-    ),
-    "MACBOOK-AIR-M2-13": ProductMapping(
-        universal_sku="MACBOOK-AIR-M2-13",
-        amazon_asin="B08C1W5N87",
-        ebay_item_id="334567890124",
-        bestbuy_sku="6509650", 
-        title="Apple MacBook Air M2 13-inch",
-        category="Laptops"
-    ),
-    "PS5-CONSOLE": ProductMapping(
-        universal_sku="PS5-CONSOLE",
-        amazon_asin="B0BZKCBWQY",
-        ebay_item_id="334567890125",
-        bestbuy_sku="6426149",
-        title="Sony PlayStation 5 Console", 
-        category="Gaming"
-    )
-}
 
 # External price aggregators (as per project description)
 EXTERNAL_PRICE_AGGREGATORS = [
@@ -112,38 +85,6 @@ async def simulate_external_aggregator_data(aggregator: str, product_sku: str) -
         "last_updated": (datetime.now() - timedelta(minutes=random.randint(5, 60))).isoformat()
     }
 
-async def simulate_user_behavior_signals(product_sku: str) -> Dict:
-    """
-    Simulate user behavior data from your e-commerce platform
-    In production: Replace with actual user analytics data
-    """
-    # Simulate realistic user behavior patterns
-    base_demand = {
-        "IPHONE-15-PRO-128": 1000,
-        "MACBOOK-AIR-M2-13": 600,
-        "PS5-CONSOLE": 800
-    }
-    
-    daily_base = base_demand.get(product_sku, 400)
-    
-    # Add realistic variations
-    page_views = daily_base + random.randint(-100, 200)
-    searches = int(page_views * random.uniform(0.3, 0.7))
-    cart_adds = int(page_views * random.uniform(0.05, 0.15))
-    purchases = int(cart_adds * random.uniform(0.15, 0.35))
-    price_comparisons = int(page_views * random.uniform(0.1, 0.3))
-    
-    # Return RAW DATA ONLY - no calculated indicators
-    # Conversion rates, abandonment rates, etc. should be calculated downstream
-    return {
-        "page_views": page_views,
-        "searches": searches,
-        "cart_additions": cart_adds,
-        "purchases": purchases,
-        "price_comparisons": price_comparisons,
-        "timestamp": datetime.now().isoformat()
-    }
-
 @router.get("/data/{universal_sku}")
 async def get_market_data_sources(universal_sku: str):
     """
@@ -174,9 +115,7 @@ async def get_market_data_sources(universal_sku: str):
     for aggregator in EXTERNAL_PRICE_AGGREGATORS:
         if (data := await simulate_external_aggregator_data(aggregator, universal_sku)) and data["available"]:
             aggregators[aggregator] = data
-    
-    # 3. FETCH USER BEHAVIOR DATA (from your platform)
-    user_behavior = await simulate_user_behavior_signals(universal_sku)
+
     
     # Return RAW DATA ONLY - no calculations or analysis
     return {
@@ -188,10 +127,9 @@ async def get_market_data_sources(universal_sku: str):
         "data_sources": {
             "competitors": competitors,
             "aggregators": aggregators,
-            "user_behavior": user_behavior
         },
-        "timestamp": datetime.now().isoformat(),
-        "collection_status": "raw_data_only"
+        "timestamp": datetime.now().isoformat(), # Current time of data collection
+        "collection_status": "external_market_data_only"
     }
 
 @router.get("/products")

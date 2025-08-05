@@ -8,6 +8,7 @@ from competitors.amazon import router as amazon_router
 from competitors.ebay import router as ebay_router  
 from competitors.bestbuy import router as bestbuy_router
 from aggregators.price_aggregator import router as aggregator_router
+from aggregators.user_behavior import router as user_behavior_router
 
 app = FastAPI(
     title="Price Intelligence Data Collection API",
@@ -29,6 +30,7 @@ app.include_router(amazon_router, prefix="/api/amazon", tags=["Amazon"])
 app.include_router(ebay_router, prefix="/api/ebay", tags=["eBay"])
 app.include_router(bestbuy_router, prefix="/api/bestbuy", tags=["Best Buy"])
 app.include_router(aggregator_router, prefix="/api/aggregator", tags=["Data Collection"])
+app.include_router(user_behavior_router, prefix="/api/user-behavior", tags=["User Behavior"])
 
 @app.get("/")
 async def root():
@@ -37,6 +39,7 @@ async def root():
         "purpose": "Collect market data from multiple sources for big data analysis",
         "endpoints": {
             "collect_market_data": "/api/aggregator/data/{universal_sku}",
+            "collect_user_behavior": "/api/user-behavior/data/{universal_sku}",
             "list_products": "/api/aggregator/products",
             "individual_competitors": {
                 "amazon": "/api/amazon/price/{asin}",
