@@ -1,4 +1,5 @@
 services:
+  # Kafka broker using KRaft mode
   kafka:
     image: apache/kafka:3.8.0  # Pin specific version instead of latest
     container_name: kafka-broker
@@ -40,6 +41,7 @@ services:
       retries: 15
       start_period: 30s
 
+  # Kafka UI for managing and monitoring Kafka
   kafka-ui:
     image: kafbat/kafka-ui:main
     container_name: kafka-ui
@@ -61,6 +63,7 @@ services:
       retries: 3
       start_period: 30s
 
+  # PostgreSQL database for storing data
   postgres:
     image: postgres
     container_name: postgres-db
@@ -92,6 +95,7 @@ services:
     networks:
       - common-network
 
+  # Adminer for database management
   adminer:
     image: adminer
     container_name: adminer
@@ -104,13 +108,14 @@ services:
     networks:
       - common-network
 
+  # Data API service for collecting market data
   market-data-api:
     build:
       context: .
       dockerfile: apis/Dockerfile
     container_name: market-data-collection-api
     ports:
-      - "8000:8000"
+      - "${DATA_API_PORT}:8000"
     # No environment variables needed - pure data collection API
     depends_on:
       # Only depends on itself to start after infrastructure is ready
@@ -121,7 +126,7 @@ services:
     networks:
       - common-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "${DATA_API_URL}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
