@@ -55,7 +55,7 @@ class BaseProducer(ABC):
                 **message,
                 'producer_timestamp': datetime.now().isoformat(),
                 'producer_id': f'{self.producer_name}-producer',
-                'message_id': f'{self.producer_name}_{self.message_count}'
+                'message_id': f'{self.to}_{self.message_count}' # optional unique ID for tracking we can drop later
             }
 
             self.producer.produce(

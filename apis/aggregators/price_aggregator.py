@@ -107,14 +107,18 @@ async def get_market_data_sources(universal_sku: str):
             competitors[competitor] = {
                 "price": price_data.price_amount,
                 "in_stock": price_data.in_stock,
-                "sku": price_data.sku
+                "sku": price_data.sku,
+                "data_timestamp": price_data.timestamp.isoformat(),  # When the price was generated
             }
-    
+
     # 2. FETCH EXTERNAL AGGREGATORS DATA (simulated)
     aggregators = {}
     for aggregator in EXTERNAL_PRICE_AGGREGATORS:
         if (data := await simulate_external_aggregator_data(aggregator, universal_sku)) and data["available"]:
-            aggregators[aggregator] = data
+            aggregators[aggregator] = {
+                **data,
+                "data_last_updated": data["last_updated"]  # When the data was last updated
+            }
 
     
     # Return RAW DATA ONLY - no calculations or analysis
@@ -128,7 +132,7 @@ async def get_market_data_sources(universal_sku: str):
             "competitors": competitors,
             "aggregators": aggregators,
         },
-        "timestamp": datetime.now().isoformat(), # Current time of data collection
+        "collection_timestamp": datetime.now().isoformat(), # Current time of data collection
         "collection_status": "external_market_data_only"
     }
 

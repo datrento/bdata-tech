@@ -57,8 +57,8 @@ class MarketDataProducer(BaseProducer):
         
         try:
             # Generate a unique key for the message
-            collection_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")[:-3]
-            message_key = self._generate_message_key(product_sku, collection_timestamp)
+            api_collection_timestamp = market_data.get('collection_timestamp', datetime.now().isoformat())
+            message_key = self._generate_message_key(product_sku)
 
             # For Raw market data
             self.send_message(
@@ -75,11 +75,11 @@ class MarketDataProducer(BaseProducer):
             competitors = market_data.get('data_sources', {}).get('competitors', {})
             for competitor, price_data in competitors.items():
                 if price_data:
-                    competitor_key = f"{product_sku}_{competitor}_{collection_timestamp}"
+                    competitor_key = f"{product_sku}_{competitor}_{api_collection_timestamp}"
 
                     competitor_message = {
-                        'timestamp': datetime.now().isoformat(),
-                        'collection_timestamp': collection_timestamp,
+                        'api_collection_timestamp': api_collection_timestamp,
+                        'data_timestamp': price_data.get('data_timestamp', api_collection_timestamp),
                         'product_sku': product_sku,
                         'competitor': competitor,
                         'price': price_data['price'],
@@ -97,11 +97,11 @@ class MarketDataProducer(BaseProducer):
             aggregators = market_data.get('data_sources', {}).get('aggregators', {})
             for aggregator, agg_data in aggregators.items():
                 if agg_data:
-                    aggregator_key = f"{product_sku}_{aggregator}_{collection_timestamp}"
+                    aggregator_key = f"{product_sku}_{aggregator}_{api_collection_timestamp}"
 
                     aggregator_message = {
-                        'timestamp': datetime.now().isoformat(),
-                        'collection_timestamp': collection_timestamp,
+                        'api_collection_timestamp': api_collection_timestamp,
+                        'data_last_updated': agg_data.get('data_last_updated', api_collection_timestamp),
                         'product_sku': product_sku,
                         'aggregator': aggregator,
                         'available': agg_data['available'],
@@ -109,7 +109,6 @@ class MarketDataProducer(BaseProducer):
                         'min_price': agg_data['price_range']['min'],
                         'max_price': agg_data['price_range']['max'],
                         'stores_tracked': agg_data['stores_tracked'],
-                        'last_updated': agg_data['last_updated'],
                     }
 
                     self.send_message(
