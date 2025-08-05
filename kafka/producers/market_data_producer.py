@@ -28,6 +28,57 @@ class MarketDataProducer(BaseProducer):
         # Option 2: Product + UUID (completely unique)
         return f"{product_sku}_{uuid.uuid4().hex[:8]}"
 
+
+    def _send_aggregator_prices(self, aggregators: dict, product_sku: str,
+                                api_collection_timestamp: str):
+        """Send aggregator prices to Kafka"""
+        for aggregator, agg_data in aggregators.items():
+            if agg_data:
+                aggregator_key = f"{product_sku}_{aggregator}_{api_collection_timestamp}"
+
+                aggregator_message = {
+                    'api_collection_timestamp': api_collection_timestamp,
+                    'data_last_updated': agg_data.get('data_last_updated', api_collection_timestamp),
+                    'product_sku': product_sku,
+                    'aggregator': aggregator,
+                    'available': agg_data['available'],
+                    'avg_price': agg_data['avg_price'],
+                    'min_price': agg_data['price_range']['min'],
+                    'max_price': agg_data['price_range']['max'],
+                    'stores_tracked': agg_data['stores_tracked'],
+                }
+
+                self.send_message(
+                    topic=self.topics['AGGREGATOR_PRICES'],
+                    message=aggregator_message,
+                    key=aggregator_key
+                )
+        
+    def _send_competitor_prices(self, competitors: dict, product_sku: str,
+                                api_collection_timestamp: str):
+        """Send competitor prices to Kafka"""
+        if not competitors:
+            self.logger.warning(f"No competitor data found for {product_sku}")
+            return
+        for competitor, price_data in competitors.items():
+            if price_data:
+                competitor_key = f"{product_sku}_{competitor}_{api_collection_timestamp}"
+
+                competitor_message = {
+                    'api_collection_timestamp': api_collection_timestamp,
+                    'data_timestamp': price_data.get('data_timestamp', api_collection_timestamp),
+                    'product_sku': product_sku,
+                    'competitor': competitor,
+                    'price': price_data['price'],
+                    'in_stock': price_data['in_stock'],
+                    'source_sku': price_data['sku'],
+                }
+
+                self.send_message(
+                    topic=self.topics['COMPETITOR_PRICES'],
+                    message=competitor_message,
+                    key=competitor_key
+                )
     async def collect_market_data(self, product_sku: str):
         """Collect market data for a specific product SKU"""
         try:
@@ -73,49 +124,11 @@ class MarketDataProducer(BaseProducer):
 
             # For competitor price 
             competitors = market_data.get('data_sources', {}).get('competitors', {})
-            for competitor, price_data in competitors.items():
-                if price_data:
-                    competitor_key = f"{product_sku}_{competitor}_{api_collection_timestamp}"
-
-                    competitor_message = {
-                        'api_collection_timestamp': api_collection_timestamp,
-                        'data_timestamp': price_data.get('data_timestamp', api_collection_timestamp),
-                        'product_sku': product_sku,
-                        'competitor': competitor,
-                        'price': price_data['price'],
-                        'in_stock': price_data['in_stock'],
-                        'source_sku': price_data['sku'],
-                    }
-
-                    self.send_message(
-                        topic=self.topics['COMPETITOR_PRICES'],
-                        message=competitor_message,
-                        key=competitor_key
-                    )
+            self._send_competitor_prices(competitors, product_sku, api_collection_timestamp)
 
             # For price aggregators
             aggregators = market_data.get('data_sources', {}).get('aggregators', {})
-            for aggregator, agg_data in aggregators.items():
-                if agg_data:
-                    aggregator_key = f"{product_sku}_{aggregator}_{api_collection_timestamp}"
-
-                    aggregator_message = {
-                        'api_collection_timestamp': api_collection_timestamp,
-                        'data_last_updated': agg_data.get('data_last_updated', api_collection_timestamp),
-                        'product_sku': product_sku,
-                        'aggregator': aggregator,
-                        'available': agg_data['available'],
-                        'avg_price': agg_data['avg_price'],
-                        'min_price': agg_data['price_range']['min'],
-                        'max_price': agg_data['price_range']['max'],
-                        'stores_tracked': agg_data['stores_tracked'],
-                    }
-
-                    self.send_message(
-                        topic=self.topics['AGGREGATOR_PRICES'],
-                        message=aggregator_message,
-                        key=aggregator_key
-                    )
+            self._send_aggregator_prices(aggregators, product_sku, api_collection_timestamp)
 
             self.logger.info(f"Successfully processed and sent data for {product_sku}")
             return True
