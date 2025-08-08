@@ -82,7 +82,8 @@ class MarketDataProducer(BaseProducer):
     async def collect_market_data(self, product_sku: str):
         """Collect market data for a specific product SKU"""
         try:
-            async with httpx.AsyncClient() as client:
+            timeout = httpx.Timeout(10.0, connect=5.0)  # Set a timeout for the request
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.get(f"{self.api_url}/{product_sku}")
                 
             if response.status_code == 200:
@@ -154,8 +155,18 @@ class MarketDataProducer(BaseProducer):
 
                 self.logger.info(f"Starting batch {batch_id}")
 
-                for product_sku in self.products_monitoring:
-                    if await self.process_product(product_sku):
+                process_product_tasks = [
+                    self.process_product(product_sku) for product_sku in self.products_monitoring
+                ]
+
+                # Run all product processing tasks concurrently
+                results = await asyncio.gather(*process_product_tasks, return_exceptions=True)
+
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        product_sku = self.products_monitoring[i]
+                        self.logger.error(f"Exception processing {product_sku}: {result}")
+                    elif result is True:
                         successful_count += 1
                 
                 batch_duration = (datetime.now() - batch_start).total_seconds()
@@ -186,14 +197,13 @@ if __name__ == "__main__":
             return False
 
     async def main():
-        # create the topics if they don't exist
-        setup_topics()
         # Initialize the producer
         producer = MarketDataProducer()
 
         try:
             await producer.start_producing()
         except Exception as e:
+            producer.logger.error(f"Error in main producer loop: {e}")
             producer.stop()
 
     # Main entry point
