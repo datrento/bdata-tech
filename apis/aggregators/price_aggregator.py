@@ -82,6 +82,7 @@ async def simulate_external_aggregator_data(aggregator: str, product_sku: str) -
             "max": max_price
         },
         "stores_tracked": stores_tracked,
+        "url": f"https://{aggregator.lower().replace(' ', '-')}.com/product/{product_sku}",
         "last_updated": (datetime.now() - timedelta(minutes=random.randint(5, 60))).isoformat()
     }
 
@@ -108,6 +109,7 @@ async def get_market_data_sources(universal_sku: str):
                 "price": price_data.price_amount,
                 "in_stock": price_data.in_stock,
                 "sku": price_data.sku,
+                "url": price_data.url,
                 "data_timestamp": price_data.timestamp.isoformat(),  # When the price was generated
             }
 
