@@ -1,5 +1,3 @@
-from config import DATA_API_USER_BEHAVIOR, COLLECTION_INTERVAL, TOPICS
-from utils import create_topic_if_not_exists
 import asyncio
 import httpx
 import uuid
@@ -9,7 +7,8 @@ import os
 import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+from config import DATA_API_USER_BEHAVIOR, USER_BEHAVIOR_INTERVAL, TOPICS, PRODUCTS_MONITORING
+from utils import create_topic_if_not_exists
 
 class UserBehaviorProducer(BaseProducer):
     """Producer for user behavior data"""
@@ -17,8 +16,9 @@ class UserBehaviorProducer(BaseProducer):
     def __init__(self):
         super().__init__('user-behavior')
         self.api_url = DATA_API_USER_BEHAVIOR
-        self.collection_interval = COLLECTION_INTERVAL
+        self.collection_interval = USER_BEHAVIOR_INTERVAL
         self.topic = TOPICS['USER_BEHAVIOR']
+        self.products_monitoring = PRODUCTS_MONITORING
 
     def _generate_message_key(self, user_id: str, timestamp: str = None) -> str:
         return f"{user_id}_{uuid.uuid4().hex[:8]}"
@@ -26,15 +26,17 @@ class UserBehaviorProducer(BaseProducer):
     async def collect_user_behavior(self):
         """Collect user behavior data from the API"""
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(self.api_url)
-            if response.status_code == 200:
-                data = response.json()
-                return data
-            else:
-                self.logger.error(
-                    f"Failed to fetch user behavior data: {response.status_code} - {response.text}")
-                return None
+            for product_sku in self.products_monitoring:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(self.api_url.str(f"/{product_sku}"))
+                if response.status_code == 200:
+                    data = response.json()
+                    return data
+                else:
+                    self.logger.error(
+                        f"Failed to fetch user behavior data: {response.status_code} - {response.text}")
+                    return None
+
         except Exception as e:
             self.logger.error(f"Error fetching user behavior data: {e}")
             return None

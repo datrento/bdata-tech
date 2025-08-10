@@ -3,7 +3,8 @@
 # When running locally, use localhost
 import os
 
-bootstrap_servers = os.getenv('KAFKA_BOOTSTRAP_SERVER_EXTERNAL', 'localhost:9092')
+bootstrap_servers = os.getenv(
+    'KAFKA_BOOTSTRAP_SERVER_EXTERNAL', 'localhost:9092')
 
 config = {
     'bootstrap.servers': bootstrap_servers,  # Will use environment variable if set
@@ -27,11 +28,14 @@ config = {
 # API Endpoints
 BASE_API = os.getenv('DATA_API', 'http://localhost:8000/api')
 DATA_API_AGGREGATOR = f"{BASE_API}/aggregator/data"
+DATA_API_USER_BEHAVIOR = f"{BASE_API}/user-behavior"
 
 # Collection intervals
 
-COLLECTION_INTERVAL = int(os.getenv('COLLECTION_INTERVAL', 300))  # Default to 5 minutes
-USER_BEHAVIOR_INTERVAL = int(os.getenv('USER_BEHAVIOR_INTERVAL', 60))  # Default to 1 minute
+COLLECTION_INTERVAL = int(
+    os.getenv('COLLECTION_INTERVAL', 300))  # Default to 5 minutes
+USER_BEHAVIOR_INTERVAL = int(
+    os.getenv('USER_BEHAVIOR_INTERVAL', 60))  # Default to 1 minute
 
 PRODUCTS_MONITORING = [
     "IPHONE-15-PRO-128",
