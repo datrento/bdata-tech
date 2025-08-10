@@ -3,3 +3,5 @@ numpy
 faker
 pandas
 confluent-kafka
+asyncio
+httpx

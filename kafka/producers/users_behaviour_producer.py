@@ -20,6 +20,10 @@ class UserBehaviorProducer(BaseProducer):
         self.topic = TOPICS['USER_BEHAVIOR']
         self.products_monitoring = PRODUCTS_MONITORING
 
+    def process_product(self, *args, **kwargs):
+        """Dummy implementation to satisfy BaseProducer's abstract method"""
+        pass
+
     def _generate_message_key(self, user_id: str, timestamp: str = None) -> str:
         return f"{user_id}_{uuid.uuid4().hex[:8]}"
 
@@ -28,7 +32,7 @@ class UserBehaviorProducer(BaseProducer):
         try:
             for product_sku in self.products_monitoring:
                 async with httpx.AsyncClient() as client:
-                    response = await client.get(self.api_url.str(f"/{product_sku}"))
+                    response = await client.get(f"{self.api_url}/user-behavior/{product_sku}")
                 if response.status_code == 200:
                     data = response.json()
                     return data
