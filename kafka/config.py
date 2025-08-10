@@ -30,7 +30,7 @@ DATA_API_AGGREGATOR = f"{BASE_API}/aggregator/data"
 
 # Collection intervals
 
-COLLECTION_INTERVAL = int(os.getenv('COLLECTION_INTERVAL', 300))  # Default to 5 minutes
+COLLECTION_INTERVAL = int(os.getenv('COLLECTION_INTERVAL', 30))  # Default to 5 minutes
 USER_BEHAVIOR_INTERVAL = int(os.getenv('USER_BEHAVIOR_INTERVAL', 60))  # Default to 1 minute
 
 PRODUCTS_MONITORING = [

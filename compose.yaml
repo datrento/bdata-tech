@@ -133,9 +133,54 @@ services:
       start_period: 20s
     volumes:
       - ./apis:/app  # For development - live reload
-      
+
+  # Flink job manager and task manager for processing data
+  flink-jobmanager:
+    build: ./flink
+    container_name: flink-jobmanager
+    ports:
+      - "8081:8081"  # Flink Web UI
+    command: jobmanager
+    # standalone-job --python /opt/flink/processing/src/jobs/price_analyzer.py
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        state.backend: filesystem
+        state.checkpoints.dir: file:///tmp/flink-checkpoints
+        heartbeat.interval: 1000
+        heartbeat.timeout: 5000
+        rest.flamegraph.enabled: true
+        web.backpressure.refresh-interval: 10000
+        execution.shutdown-on-application-finish: false
+    volumes:
+      - ./flink:/opt/flink/app
+      - flink_data:/tmp/
+    networks:
+      - common-network
+  flink-taskmanager:
+    build: ./flink
+    container_name: flink-taskmanager
+    command: taskmanager
+    depends_on:
+      - flink-jobmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 3
+        state.backend: filesystem
+        state.checkpoints.dir: file:///tmp/flink-checkpoints
+        heartbeat.interval: 1000
+        heartbeat.timeout: 5000
+    volumes:
+      - flink_data:/tmp/
+    networks:
+      - common-network
+
 volumes:
   kafka-data:
   postgres_data:
+  flink_data:
 networks:
   common-network:

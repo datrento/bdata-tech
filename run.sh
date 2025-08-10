@@ -40,6 +40,7 @@ case "$1" in
     echo "Kafka UI: $(grep KAFKA_UI_URL .env | cut -d= -f2)"
     echo "Adminer UI: $(grep ADMINER_URL .env | cut -d= -f2)"
     echo "Data API: $(grep DATA_API_URL .env | cut -d= -f2)/docs"
+    echo "Flink UI: $(grep FLINK_UI_URL .env | cut -d= -f2)"
     ;;
   stop|down)
     echo "Stopping services..."
