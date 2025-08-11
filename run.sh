@@ -36,7 +36,7 @@ case "$1" in
     echo "Starting services..."
     $compose up -d --remove-orphans
     echo -e "${GREEN}Services started!${NC}"
-    # echo "Dashboard: http://$(grep STREAMLIT_HOST .env | cut -d= -f2):$(grep STREAMLIT_PORT .env | cut -d= -f2)"
+    echo "Dashboard: $(grep DASHBOARD_URL .env | cut -d= -f2)"
     echo "Kafka UI: $(grep KAFKA_UI_URL .env | cut -d= -f2)"
     echo "Adminer UI: $(grep ADMINER_URL .env | cut -d= -f2)"
     echo "Data API: $(grep DATA_API_URL .env | cut -d= -f2)/docs"

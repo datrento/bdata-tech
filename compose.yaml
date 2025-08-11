@@ -142,6 +142,9 @@ services:
       - "8081:8081"  # Flink Web UI
     command: jobmanager
     # standalone-job --python /opt/flink/processing/src/jobs/price_analyzer.py
+    depends_on:
+      - kafka
+      - postgres
     environment:
       - |
         FLINK_PROPERTIES=
@@ -164,6 +167,8 @@ services:
     command: taskmanager
     depends_on:
       - flink-jobmanager
+      - kafka
+      - postgres
     environment:
       - |
         FLINK_PROPERTIES=
@@ -177,6 +182,29 @@ services:
       - flink_data:/tmp/
     networks:
       - common-network
+
+  # Dashboard for price intelligence visualization
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: price-intelligence-dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      - POSTGRES_URL=${POSTGRES_URL}
+    depends_on:
+      - postgres
+    volumes:
+      - ./dashboard:/app
+    networks:
+      - common-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 volumes:
   kafka-data:

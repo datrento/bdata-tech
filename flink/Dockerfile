@@ -20,4 +20,4 @@ RUN apt-get update && \
 
 # Copy requirements and install Python packages (as root)
 COPY requirements.txt .
-RUN pip install --no-cache-dir --disable-pip-version-check -r requirements.txt
+RUN pip3 install --no-cache-dir --disable-pip-version-check -r requirements.txt

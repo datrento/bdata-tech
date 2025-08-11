@@ -83,26 +83,26 @@ class PriceMonitoringJob(BaseJob):
         """
         
         table_result = self.t_env.execute_sql(monitoring_query)
-        print("🔍 Price monitoring started with Table API")
-        print("📊 Detecting price changes >= 5%")
+        print("Price monitoring started with Table API")
+        print("Detecting price changes >= 5%")
         
         return table_result
     
     def run(self):
         """Run the complete job"""
-        print("🚀 Starting Price Monitor (Table API Only)")
-        
+        print("Starting Price Monitor")
+
         try:
             self.setup_tables()
             result = self.run_price_monitoring()
             
-            print("✅ Job submitted successfully!")
-            print("🔄 Running continuously...")
+            print("Job submitted successfully!")
+            print("Running continuously...")
             
             result.wait()
-            
+
         except Exception as e:
-            print(f"❌ Error: {e}")
+            print(f"Error: {e}")
             raise
 
 if __name__ == "__main__":
