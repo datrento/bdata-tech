@@ -65,3 +65,6 @@ coverage.xml
 
 # dotenv files
 .env
+
+# Kafka Connect downloaded connector jars
+kafka/connect/plugins/mongodb/*.jar

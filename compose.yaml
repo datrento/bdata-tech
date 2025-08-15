@@ -1,4 +1,5 @@
 services:
+  # Kafka broker using KRaft mode
   kafka:
     image: apache/kafka:3.8.0  # Pin specific version instead of latest
     container_name: kafka-broker
@@ -40,6 +41,7 @@ services:
       retries: 15
       start_period: 30s
 
+  # Kafka UI for managing and monitoring Kafka
   kafka-ui:
     image: kafbat/kafka-ui:main
     container_name: kafka-ui
@@ -61,7 +63,61 @@ services:
       retries: 3
       start_period: 30s
 
+  # Kafka Connect with MongoDB Sink plugin
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect:7.6.1
+    container_name: kafka-connect
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8083:8083"  # Kafka Connect REST API
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka:9093
+      CONNECT_GROUP_ID: connect-cluster
+      CONNECT_CONFIG_STORAGE_TOPIC: _connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: _connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: _connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_PLUGIN_PATH: /usr/share/java,/etc/kafka-connect/jars
+      # Install MongoDB Kafka Connector
+      CONNECTOR_PLUGINS: mongodb
+    volumes:
+      - ./kafka/connect/plugins:/etc/kafka-connect/jars
+      - ./kafka/connect/mongodb-sink.json:/configs/mongodb-sink.json:ro
+    networks:
+      - common-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8083/connectors || exit 1" ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
 
+  # MongoDB database
+  mongo:
+    image: mongo:7
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - common-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 })"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # PostgreSQL database for storing data
   postgres:
     image: postgres
     container_name: postgres-db
@@ -93,6 +149,7 @@ services:
     networks:
       - common-network
 
+  # Adminer for database management
   adminer:
     image: adminer
     container_name: adminer
@@ -105,8 +162,35 @@ services:
     networks:
       - common-network
 
+  # Data API service for collecting market data
+  market-data-api:
+    build:
+      context: .
+      dockerfile: apis/Dockerfile
+    container_name: market-data-collection-api
+    ports:
+      - "${DATA_API_PORT}:8000"
+    # No environment variables needed - pure data collection API
+    depends_on:
+      # Only depends on itself to start after infrastructure is ready
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - common-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "${DATA_API_URL}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    volumes:
+      - ./apis:/app  # For development - live reload
+      
 volumes:
   kafka-data:
   postgres_data:
+  mongo_data:
 networks:
   common-network:
