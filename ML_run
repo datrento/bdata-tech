@@ -1,0 +1,9 @@
+# bring up infra + API
+./run.sh start
+
+# in another terminal, bring up the ML service
+docker compose up -d ml-pricer
+
+# verify recommendations are flowing
+docker exec -it kafka-broker /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic pricing-recommendations --from-beginning
