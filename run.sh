@@ -33,7 +33,9 @@ fi
 # Parse command
 case "$1" in
   start|up)
-    echo "Starting services..."
+  echo "Ensuring MongoDB Kafka connector is present..."
+  bash scripts/fetch_mongo_connector.sh || echo "(Warning) Could not auto-download MongoDB connector. Proceeding."
+  echo "Starting services..."
     $compose up -d --remove-orphans
     echo -e "${GREEN}Services started!${NC}"
     # echo "Dashboard: http://$(grep STREAMLIT_HOST .env | cut -d= -f2):$(grep STREAMLIT_PORT .env | cut -d= -f2)"
@@ -56,6 +58,8 @@ case "$1" in
   build)
     echo "Building services..."
     $compose build --no-cache
+  echo "Ensuring MongoDB Kafka connector is present (post-build)..."
+  bash scripts/fetch_mongo_connector.sh || echo "(Warning) Could not auto-download MongoDB connector."
     ;;
   *)
     echo "Usage: $0 {start|stop|restart|logs|build}"
