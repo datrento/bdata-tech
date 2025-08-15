@@ -1,0 +1,7 @@
+TOPICS = {
+    'MARKET_DATA_RAW': 'market-data-raw',
+    'USER_BEHAVIOR': 'user-behavior-events',
+    'COMPETITOR_PRICES': 'competitor-prices',
+    'AGGREGATOR_PRICES': 'aggregator-prices',
+    'PRICING_RECOMMENDATIONS': 'pricing-recommendations',  # NEW
+}
