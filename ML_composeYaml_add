@@ -1,0 +1,23 @@
+# TO BE APPENDED TO compose.yaml
+ ml-pricer:
+    build:
+      context: .
+      dockerfile: ml/Dockerfile
+    container_name: ml-pricer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVER_EXTERNAL: kafka:9093
+      TOPIC_COMPETITOR: competitor-prices
+      TOPIC_AGGREGATOR: aggregator-prices
+      TOPIC_USER_BEHAVIOR: user-behavior-events
+      TOPIC_RECS: pricing-recommendations
+      MODEL_PATH: ml/artifacts/demand_xgb.json
+      FEATURES_PATH: ml/artifacts/features.json
+      STATE_WINDOW_MIN: 20
+      REPRICE_EVERY_SEC: 30
+      MARGIN_FLOOR: 0.05
+    volumes:
+      - ./:/app
+    networks: [common-network]
