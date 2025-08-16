@@ -40,10 +40,10 @@ async def simulate_user_behavior_signals(product_sku: str) -> Dict:
         "cart_additions": cart_adds,
         "purchases": purchases,
         "price_comparisons": price_comparisons,
-        "timestamp": datetime.now().isoformat()
+        "data_timestamp": datetime.now().astimezone().isoformat()
     }
 
-@router.get("/user-behavior/{universal_sku}")
+@router.get("/data/{universal_sku}")
 async def get_user_behavior_data(universal_sku: str):
     """
     Internal Platform User Behavior Data: Fetch raw user behavior from our hypothetical platform
@@ -67,14 +67,4 @@ async def get_user_behavior_data(universal_sku: str):
         },
         "user_behavior": user_behavior,
         "data_source": "internal_platform",
-    }
-
-
-@router.get("/products")
-async def list_tracked_products():
-    """List all products being tracked for user behavior analytics"""
-    return {
-        "tracked_products": list(PRODUCT_CATALOG.keys()),
-        "total_count": len(PRODUCT_CATALOG),
-        "data_source": "internal_platform"
     }

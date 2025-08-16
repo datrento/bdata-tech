@@ -6,7 +6,7 @@ Provides market intelligence for ML-driven dynamic pricing decisions
 from fastapi import APIRouter, HTTPException
 import httpx
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 from models import SimplePriceResponse
 from catalog import PRODUCT_CATALOG
@@ -101,16 +101,22 @@ async def get_market_data_sources(universal_sku: str):
     
     product = PRODUCT_CATALOG[universal_sku]
     
+    
     # 1. FETCH COMPETITOR DATA (real-time)
     competitors = {}
     for competitor, sku in [("amazon", product.amazon_asin), ("ebay", product.ebay_item_id), ("bestbuy", product.bestbuy_sku)]:
         if sku and (price_data := await fetch_competitor_price(competitor, sku)):
+
+            # Keep simulated event time close to collection time to ease event-time analysis
+            collection_time = datetime.now().astimezone()
+            jitter_seconds = random.randint(0, 30)  # at most 30s earlier than collection
+            simulated_time = collection_time - timedelta(seconds=jitter_seconds)
             competitors[competitor] = {
                 "price": price_data.price_amount,
                 "in_stock": price_data.in_stock,
                 "sku": price_data.sku,
                 "url": price_data.url,
-                "data_timestamp": price_data.timestamp.isoformat(),  # When the price was generated
+                "data_timestamp": simulated_time.isoformat(),  # When the price was changed
             }
 
     # 2. FETCH EXTERNAL AGGREGATORS DATA (simulated)
@@ -119,7 +125,7 @@ async def get_market_data_sources(universal_sku: str):
         if (data := await simulate_external_aggregator_data(aggregator, universal_sku)) and data["available"]:
             aggregators[aggregator] = {
                 **data,
-                "data_last_updated": data["last_updated"]  # When the data was last updated
+                "data_last_updated": datetime.now().astimezone().isoformat()  # mark with tz
             }
 
     
@@ -134,7 +140,7 @@ async def get_market_data_sources(universal_sku: str):
             "competitors": competitors,
             "aggregators": aggregators,
         },
-        "collection_timestamp": datetime.now().isoformat(), # Current time of data collection
+        "collection_timestamp": datetime.now().astimezone().isoformat(), # tz-aware collection time
         "collection_status": "external_market_data_only"
     }
 
