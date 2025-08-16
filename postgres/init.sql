@@ -1,13 +1,3 @@
--- Users information table
-CREATE TABLE
-    IF NOT EXISTS users (
-        id BIGSERIAL PRIMARY KEY,
-        username VARCHAR(50) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        email VARCHAR(100) UNIQUE NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
 -- Our platform products table
 CREATE TABLE
     IF NOT EXISTS platform_products (
@@ -16,7 +6,12 @@ CREATE TABLE
         name VARCHAR(255) NOT NULL,
         category VARCHAR(100),
         brand VARCHAR(100) NULL,
-        current_price DECIMAL(10, 2) NOT NULL, -- current selling price
+        cost DECIMAL(10, 2) NOT NULL, -- Cost price to acquire
+        min_viable_price DECIMAL(10, 2) NULL, -- Minimum viable price
+        current_price DECIMAL(10, 2) NOT NULL, -- Actual selling price
+        price_sensitivity VARCHAR(50) NULL, -- Price sensitivity
+        in_stock BOOLEAN DEFAULT TRUE,
+        is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -29,6 +24,19 @@ CREATE TABLE
         website VARCHAR(255) NOT NULL,
         is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+-- Universal product mapping table
+CREATE TABLE
+    IF NOT EXISTS product_mapping (
+        id BIGSERIAL PRIMARY KEY,
+        product_id BIGINT NOT NULL,
+        amazon_asin VARCHAR(100) NOT NULL,
+        ebay_item_id VARCHAR(100) NOT NULL,
+        bestbuy_sku VARCHAR(100) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES platform_products (id)
     );
 
 -- Competitor price history table (data from Kafka)
@@ -45,43 +53,55 @@ CREATE TABLE
         FOREIGN KEY (competitor_id) REFERENCES external_competitors (id)
     );
 
--- Price alerts table (when a competitor changes their price significantly)
-CREATE TABLE flink_price_alerts (
-    id SERIAL PRIMARY KEY,
-    product_sku VARCHAR(100),
-    alert_pattern VARCHAR(100), -- 'price_war', 'market_shock', 'opportunity'
-    involved_competitors TEXT[], -- Array of competitor names
-    confidence_score DECIMAL(3,2),
-    recommended_action TEXT,
-    alert_timestamp TIMESTAMP
-);
-
-
--- Add this table to your postgres/init.sql
-
 -- Simple price alerts table for Flink
-CREATE TABLE IF NOT EXISTS price_alerts (
-    id BIGSERIAL PRIMARY KEY,
-    product_sku VARCHAR(100) NOT NULL,
-    competitor_name VARCHAR(255) NOT NULL,
-    previous_price DECIMAL(10,2),
-    new_price DECIMAL(10,2),
-    price_change DECIMAL(10,2),
-    percentage_change DECIMAL(5,2),
-    alert_type VARCHAR(50),
-    alert_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    processed BOOLEAN DEFAULT FALSE,
-    
-    FOREIGN KEY (product_sku) REFERENCES platform_products(sku)
-);
+CREATE TABLE
+    IF NOT EXISTS price_alerts (
+        id BIGSERIAL PRIMARY KEY,
+        product_sku VARCHAR(100) NOT NULL,
+        competitor_name VARCHAR(255) NOT NULL,
+        previous_price DECIMAL(10, 2),
+        new_price DECIMAL(10, 2),
+        price_change DECIMAL(10, 2),
+        percentage_change DECIMAL(5, 2),
+        alert_type VARCHAR(50),
+        alert_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processed BOOLEAN DEFAULT FALSE,
+        FOREIGN KEY (product_sku) REFERENCES platform_products (sku)
+    );
 
--- Index for better performance
-CREATE INDEX IF NOT EXISTS idx_price_alerts_unprocessed 
-ON price_alerts(processed, alert_timestamp DESC) 
-WHERE processed = FALSE;
+-- Time-based price trends table
+CREATE TABLE
+    IF NOT EXISTS price_trends (
+        id BIGSERIAL PRIMARY KEY,
+        product_sku VARCHAR(100) NOT NULL,
+        competitor_name VARCHAR(255) NOT NULL,
+        window_start TIMESTAMP NOT NULL,
+        window_end TIMESTAMP NOT NULL,
+        avg_price DECIMAL(10, 2) NOT NULL,
+        price_volatility DECIMAL(5, 2) NOT NULL,
+        trend_direction VARCHAR(50) NOT NULL,
+        FOREIGN KEY (product_sku) REFERENCES platform_products (sku)
+    );
 
--- Keep your existing flink_price_alerts table for complex alerts
--- This new price_alerts table is for simple price change alerts
+-- Price signals table for real-time pricing insights
+CREATE TABLE
+    IF NOT EXISTS price_signals (
+        id BIGSERIAL PRIMARY KEY,
+        product_sku VARCHAR(100) NOT NULL,
+        competitor_id BIGINT NOT NULL,
+        signal_type VARCHAR(50) NOT NULL, -- e.g., 'undercut', 'price_spike', 'stockout'
+        platform_price DECIMAL(10, 2) NOT NULL,
+        competitor_price DECIMAL(10, 2) NOT NULL,
+        percentage_diff DECIMAL(5, 2) NOT NULL, -- Percentage difference that triggered the signal
+        recommendation VARCHAR(255),
+        priority SMALLINT DEFAULT 3,
+        in_stock BOOLEAN DEFAULT TRUE,
+        signal_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        is_active BOOLEAN DEFAULT TRUE,
+        FOREIGN KEY (product_sku) REFERENCES platform_products (sku),
+        FOREIGN KEY (competitor_id) REFERENCES external_competitors (id)
+    );
+
 -- Aggregator data table (data from Kafka)
 CREATE TABLE
     IF NOT EXISTS aggregator_data (
@@ -97,7 +117,24 @@ CREATE TABLE
         FOREIGN KEY (product_sku) REFERENCES platform_products (sku)
     );
 
+-- Create indexes for efficient querying
+CREATE INDEX idx_price_signals_active ON price_signals (is_active, signal_timestamp DESC)
+WHERE
+    is_active = TRUE;
+
+CREATE INDEX idx_price_signals_product ON price_signals (product_sku, signal_timestamp DESC);
+
+CREATE INDEX idx_price_signals_type ON price_signals (signal_type, signal_timestamp DESC);
+
+-- Index for better performance
+-- Add time-based indexes
 -- Performance indexes for faster queries
+CREATE INDEX idx_price_trends_time ON price_trends (window_start, window_end);
+
+CREATE INDEX IF NOT EXISTS idx_price_alerts_unprocessed ON price_alerts (processed, alert_timestamp DESC)
+WHERE
+    processed = FALSE;
+
 CREATE INDEX IF NOT EXISTS idx_competitor_price_sku_time ON competitor_price_history (product_sku, collection_timestamp);
 
 CREATE INDEX IF NOT EXISTS idx_price_alerts_unprocessed ON price_alerts (processed)
@@ -106,28 +143,46 @@ WHERE
 
 -- Insert platform products
 INSERT INTO
-    platform_products (sku, name, category, brand, current_price)
+    platform_products (
+        sku,
+        name,
+        category,
+        brand,
+        cost,
+        min_viable_price,
+        current_price,
+        price_sensitivity
+    )
 VALUES
     (
         'IPHONE-15-PRO-128',
         'iPhone 15 Pro 128GB',
         'Smartphones',
         'Apple',
-        999.99
+        850.00,
+        900.00,
+        950.00,
+        'low'
     ),
     (
         'MACBOOK-AIR-M2-13',
         'MacBook Air M2 13-inch',
         'Laptops',
         'Apple',
-        1199.99
+        950.00,
+        1000.00,
+        1050.00,
+        'low'
     ),
     (
         'PS5-CONSOLE',
         'PlayStation 5 Console',
         'Gaming',
         'Sony',
-        499.99
+        400.00,
+        450.00,
+        500.00,
+        'low'
     ) ON CONFLICT (sku) DO NOTHING;
 
 -- Insert external competitors
