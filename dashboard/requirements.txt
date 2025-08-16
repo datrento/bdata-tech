@@ -3,3 +3,4 @@ pandas
 plotly
 psycopg2-binary
 sqlalchemy
+streamlit-autorefresh

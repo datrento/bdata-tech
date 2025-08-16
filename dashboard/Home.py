@@ -1,9 +1,11 @@
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 import pandas as pd
 import plotly.express as px
 import os
 from datetime import datetime
 from sqlalchemy import create_engine
+from db import get_db_connection
 
 # Set page configuration
 st.set_page_config(
@@ -12,16 +14,8 @@ st.set_page_config(
     layout="wide"
 )
 
-# Database connection
-def get_db_connection():
-    db_url = os.getenv(
-        'POSTGRES_URL', 
-        'postgresql+psycopg2://postgres:postgres@postgres:5432/price_intelligence'
-    )
-    return create_engine(db_url)
-
 # Load data from PostgreSQL
-@st.cache_data(ttl=60)  # Cache for 1 minute
+@st.cache_data(ttl=10)  # Auto-refresh friendly cache (10s)
 def load_price_alerts(days=7):
     engine = get_db_connection()
     query = f"""
@@ -44,7 +38,7 @@ def load_price_alerts(days=7):
         df['date'] = df['alert_timestamp'].dt.date
     return df
 
-@st.cache_data(ttl=60)  # Cache for 1 minute
+@st.cache_data(ttl=10)  # Auto-refresh friendly cache (10s)
 def load_competitor_stats():
     engine = get_db_connection()
     query = """
@@ -61,7 +55,7 @@ def load_competitor_stats():
     """
     return pd.read_sql(query, engine)
 
-@st.cache_data(ttl=60)  # Cache for 1 minute
+@st.cache_data(ttl=10)  # Auto-refresh friendly cache (10s)
 def load_product_stats():
     engine = get_db_connection()
     query = """
@@ -91,6 +85,9 @@ st.markdown("Real-time monitoring of competitor price changes")
 col1, col2, col3 = st.columns([1, 2, 1])
 with col1:
     days = st.slider("Data timeframe (days)", 1, 90, 7)
+with col2:
+    st_autorefresh(interval=120000, key="autorefresh")
+
 with col3:
     if st.button("Refresh Data", icon=":material/refresh:"):
         # Clear all cached data
