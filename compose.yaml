@@ -79,6 +79,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_HOST_AUTH_METHOD: trust # Allow connections without password for local development
       POSTGRES_PORT: 5432  # Specify the port for PostgreSQL
+      TZ: Europe/Rome
     volumes:
       - type: tmpfs
         target: /dev/shm
@@ -116,7 +117,8 @@ services:
     container_name: market-data-collection-api
     ports:
       - "${DATA_API_PORT}:8000"
-    # No environment variables needed - pure data collection API
+    environment:
+      TZ: Europe/Rome
     depends_on:
       # Only depends on itself to start after infrastructure is ready
       kafka:
@@ -133,9 +135,134 @@ services:
       start_period: 20s
     volumes:
       - ./apis:/app  # For development - live reload
-      
+
+
+  # Flink job manager and task manager for processing data
+  flink-jobmanager:
+    build: ./flink
+    container_name: flink-jobmanager
+    ports:
+      - "8081:8081"  # Flink Web UI
+    command: jobmanager
+    # standalone-job --python /opt/flink/processing/src/jobs/price_analyzer.py
+    depends_on:
+      - kafka
+      - postgres
+      - market-data-producer
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        state.backend: filesystem
+        state.checkpoints.dir: file:///tmp/flink-checkpoints
+        heartbeat.interval: 1000
+        heartbeat.timeout: 5000
+        rest.flamegraph.enabled: true
+        web.backpressure.refresh-interval: 10000
+        execution.shutdown-on-application-finish: false
+      - FLINK_LOCAL_TIME_ZONE=Europe/Rome
+      - TZ=Europe/Rome
+
+      - ALERT_PERCENT_THRESHOLD=${ALERT_PERCENT_THRESHOLD}
+      - KAFKA_GROUP_ID=price_monitoring_group
+      - KAFKA_TOPIC=competitor-prices
+    volumes:
+      - ./flink:/opt/flink/app
+      - flink_data:/tmp/
+    networks:
+      - common-network
+  flink-taskmanager:
+    build: ./flink
+    container_name: flink-taskmanager
+    command: taskmanager
+    depends_on:
+      - flink-jobmanager
+      - kafka
+      - postgres
+      - market-data-producer
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 3
+        state.backend: filesystem
+        state.checkpoints.dir: file:///tmp/flink-checkpoints
+        heartbeat.interval: 1000
+        heartbeat.timeout: 5000
+      - FLINK_LOCAL_TIME_ZONE=Europe/Rome
+      - TZ=Europe/Rome
+    volumes:
+      - flink_data:/tmp/
+    networks:
+      - common-network
+
+  # Market data Kafka producer
+  market-data-producer:
+    build:
+      context: ./kafka
+      dockerfile: Dockerfile
+    container_name: market-data-producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      market-data-api:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVER=${KAFKA_BOOTSTRAP_SERVER}
+      - DATA_API_INTERNAL_URL=${DATA_API_INTERNAL_URL}
+      - COLLECTION_INTERVAL=${COLLECTION_INTERVAL}
+    command: ["python", "producers/market_data_producer.py"]
+    volumes:
+      - ./kafka:/kafka  # live-reload code for development
+    networks:
+      - common-network
+
+  # User behavior producer
+  user-behavior-producer:
+    build:
+      context: ./kafka
+      dockerfile: Dockerfile
+    container_name: user-behavior-producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      market-data-api:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVER=${KAFKA_BOOTSTRAP_SERVER}
+      - DATA_API_INTERNAL_URL=${DATA_API_INTERNAL_URL}
+      - USER_BEHAVIOR_INTERVAL=${USER_BEHAVIOR_INTERVAL}
+    command: ["python", "producers/user_behavior_producer.py"]
+    volumes:
+      - ./kafka:/kafka
+    networks:
+      - common-network
+  # Dashboard for price intelligence visualization
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: price-intelligence-dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      - POSTGRES_URL=${POSTGRES_URL}
+    depends_on:
+      - postgres
+    volumes:
+      - ./dashboard:/app
+    networks:
+      - common-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
 volumes:
   kafka-data:
   postgres_data:
+  flink_data:
 networks:
   common-network:

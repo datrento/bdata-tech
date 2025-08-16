@@ -1,5 +1,6 @@
 import json
 import logging
+import uuid
 from confluent_kafka import Producer
 from datetime import datetime
 from abc import ABC, abstractmethod
@@ -38,6 +39,14 @@ class BaseProducer(ABC):
         )
 
         return logging.getLogger(f'{self.producer_name}Producer')
+    
+    def _generate_message_key(self, product_sku: str, timestamp: str=None) -> str:
+        """Generate a unique key for the message based on product SKU and timestamp"""
+        # Option 1: Product + Timestamp (maintains some ordering)
+        # return f"{product_sku}_{timestamp}"
+        
+        # Option 2: Product + UUID (completely unique)
+        return f"{product_sku}_{uuid.uuid4().hex[:8]}"
 
     def _delivery_callback(self, err, msg) -> None:
         """Callback for message delivery confirmation."""
@@ -96,9 +105,4 @@ class BaseProducer(ABC):
     @abstractmethod
     async def start_producing(self, product_sku: str) -> None:
         """Abstract method to start producing messages."""
-        pass
-
-    @abstractmethod
-    async def process_product(self, product_sku: str) -> None:
-        """Abstract method to process a product and send messages."""
         pass

@@ -1,6 +1,5 @@
 import asyncio
 import httpx
-import uuid
 from datetime import datetime
 from base_producer import BaseProducer
 import os
@@ -20,25 +19,27 @@ class MarketDataProducer(BaseProducer):
         self.topics = TOPICS
         self.products_monitoring = PRODUCTS_MONITORING
 
-    def _generate_message_key(self, product_sku: str, timestamp: str=None) -> str:
-        """Generate a unique key for the message based on product SKU and timestamp"""
-        # Option 1: Product + Timestamp (maintains some ordering)
-        # return f"{product_sku}_{timestamp}"
-        
-        # Option 2: Product + UUID (completely unique)
-        return f"{product_sku}_{uuid.uuid4().hex[:8]}"
-
-
     def _send_aggregator_prices(self, aggregators: dict, product_sku: str,
                                 api_collection_timestamp: str):
         """Send aggregator prices to Kafka"""
         for aggregator, agg_data in aggregators.items():
             if agg_data:
                 aggregator_key = f"{product_sku}_{aggregator}_{api_collection_timestamp}"
+                try:
+                    api_collection_ts_ms = int(datetime.fromisoformat(api_collection_timestamp).timestamp() * 1000)
+                except Exception:
+                    api_collection_ts_ms = int(datetime.now().timestamp() * 1000)
+                try:
+                    data_last_updated_str = agg_data.get('data_last_updated', api_collection_timestamp)
+                    data_last_updated_ts_ms = int(datetime.fromisoformat(data_last_updated_str).timestamp() * 1000)
+                except Exception:
+                    data_last_updated_ts_ms = api_collection_ts_ms
 
                 aggregator_message = {
                     'api_collection_timestamp': api_collection_timestamp,
                     'data_last_updated': agg_data.get('data_last_updated', api_collection_timestamp),
+                    'api_collection_ts_ms': api_collection_ts_ms,
+                    'data_last_updated_ts_ms': data_last_updated_ts_ms,
                     'product_sku': product_sku,
                     'aggregator': aggregator,
                     'available': agg_data['available'],
@@ -63,12 +64,22 @@ class MarketDataProducer(BaseProducer):
         for competitor, price_data in competitors.items():
             if price_data:
                 competitor_key = f"{product_sku}_{competitor}_{api_collection_timestamp}"
+                try:
+                    # Parse data timestamp
+                    api_collection_ts_ms = int(datetime.fromisoformat(api_collection_timestamp).timestamp() * 1000)
+                    data_ts_str = price_data.get('data_timestamp', api_collection_timestamp)
+                    data_ts_ms = int(datetime.fromisoformat(data_ts_str).timestamp() * 1000)
+                except Exception:
+                    api_collection_ts_ms = int(datetime.now().timestamp() * 1000)
+                    data_ts_ms = api_collection_ts_ms
 
                 competitor_message = {
                     'api_collection_timestamp': api_collection_timestamp,
                     'data_timestamp': price_data.get('data_timestamp', api_collection_timestamp),
+                    'api_collection_ts_ms': api_collection_ts_ms,
+                    'data_ts_ms': data_ts_ms,
                     'product_sku': product_sku,
-                    'competitor': competitor,
+                    'competitor_name': competitor,
                     'price': price_data['price'],
                     'in_stock': price_data['in_stock'],
                     'source_sku': price_data['sku'],
@@ -109,7 +120,7 @@ class MarketDataProducer(BaseProducer):
         
         try:
             # Generate a unique key for the message
-            api_collection_timestamp = market_data.get('collection_timestamp', datetime.now().isoformat())
+            api_collection_timestamp = market_data.get('collection_timestamp', datetime.now().astimezone().isoformat())
             message_key = self._generate_message_key(product_sku)
 
             # For Raw market data
