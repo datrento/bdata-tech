@@ -88,6 +88,7 @@ services:
 
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql # Initialize database with SQL script and postgres will run it
+      - ./postgres/init-cdc.sh:/docker-entrypoint-initdb.d/init-cdc.sh # CDC configuration script
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: 5s
@@ -252,6 +253,10 @@ services:
       - "8501:8501"
     environment:
       - POSTGRES_URL=${POSTGRES_URL}
+      - ALERT_PERCENT_THRESHOLD=${ALERT_PERCENT_THRESHOLD}
+      - UNDERCUT_THRESHOLD=${UNDERCUT_THRESHOLD}
+      - OVERPRICED_PERCENT_THRESHOLD=${OVERPRICED_PERCENT_THRESHOLD}
+      - PRICE_INCREASE_24HRS_THRESHOLD=${PRICE_INCREASE_24HRS_THRESHOLD}
     depends_on:
       - postgres
     volumes:

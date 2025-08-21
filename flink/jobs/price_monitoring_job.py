@@ -16,6 +16,7 @@ class PriceMonitoringJob(BaseJob):
         # Ensure we replace any previous definition that had TIMESTAMP_LTZ JSON fields
         self.t_env.execute_sql("DROP TABLE IF EXISTS competitor_prices")
 
+        ## SOURCE TABLES--------------
         self.t_env.execute_sql(f"""
             CREATE TABLE competitor_prices (
                 product_sku STRING,
@@ -43,6 +44,26 @@ class PriceMonitoringJob(BaseJob):
                 'json.ignore-parse-errors' = 'true'
             )""")
         
+        self.t_env.execute_sql(f"""
+            CREATE TABLE external_competitors (
+                id BIGINT,
+                name STRING,
+                code STRING
+            ) WITH (
+                'connector' = 'postgres-cdc',
+                'debezium.snapshot.mode' = 'initial',
+                'hostname' = '{self.postgres_host}',
+                'port' = '{self.postgres_port}',
+                'username' = '{self.postgres_user}',
+                'password' = '{self.postgres_password}',
+                'database-name' = '{self.postgres_db}',
+                'schema-name' = 'public',
+                'table-name' = 'external_competitors',
+                'slot.name' = 'flink_external_competitors'
+            )
+        """)
+
+        ## SINK TABLES--------------
         self.t_env.execute_sql(f"""
             CREATE TABLE price_alerts (
                 product_sku STRING,
@@ -85,6 +106,44 @@ class PriceMonitoringJob(BaseJob):
                 'sink.parallelism' = '1'
             )
         """)
+
+        self.t_env.execute_sql(f"""
+            CREATE TABLE competitor_price_history (
+                product_sku STRING,
+                competitor_id BIGINT,
+                price DECIMAL(10, 2),
+                in_stock BOOLEAN,
+                source_sku STRING,
+                data_timestamp TIMESTAMP(3),
+                collection_timestamp TIMESTAMP(3)
+            ) WITH (
+                'connector' = 'jdbc',
+                'url' = '{self.postgres_url}',
+                'table-name' = 'competitor_price_history',
+                'driver' = 'org.postgresql.Driver',
+                'username' = '{self.postgres_user}',
+                'password' = '{self.postgres_password}',
+                'sink.parallelism' = '1'
+            )
+        """)
+
+    def build_competitor_price_history_query(self):
+        """Build competitor price history INSERT SQL"""
+        history_query = f"""
+            INSERT INTO competitor_price_history
+            SELECT 
+                product_sku,
+                ec.id AS competitor_id,
+                price,
+                in_stock,
+                source_sku,
+                TO_TIMESTAMP_LTZ(data_ts_ms, 3) AS data_timestamp,
+                TO_TIMESTAMP_LTZ(api_collection_ts_ms, 3) AS collection_timestamp
+            FROM competitor_prices cp
+            JOIN external_competitors ec ON cp.competitor_name = ec.code
+            WHERE cp.data_ts_ms IS NOT NULL
+        """
+        return history_query
 
     def build_price_monitoring_query(self):
         """Build price monitoring INSERT SQL"""
@@ -142,7 +201,7 @@ class PriceMonitoringJob(BaseJob):
                         INTERVAL '5' MINUTE
                     )
                 )
-                WHERE event_time > CURRENT_TIMESTAMP - INTERVAL '1' HOUR
+                -- WHERE event_time > CURRENT_TIMESTAMP - INTERVAL '1' HOUR
             ),
             stats AS (
                 SELECT 
@@ -236,11 +295,13 @@ class PriceMonitoringJob(BaseJob):
             print("Building queries and starting a single multi-sink job...")
             trend_event_query= self.build_trend_queries()
             monitoring_query = self.build_price_monitoring_query()
+            history_query = self.build_competitor_price_history_query()
 
             stmt_set = self.t_env.create_statement_set()
             stmt_set.add_insert_sql(trend_event_query)
             # stmt_set.add_insert_sql(trend_proc_query)
             stmt_set.add_insert_sql(monitoring_query)
+            stmt_set.add_insert_sql(history_query)
 
             result = stmt_set.execute()
             print("Multi-sink job submitted. Waiting...")
