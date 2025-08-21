@@ -13,6 +13,10 @@ class BaseJob(ABC):
         self.postgres_url = os.getenv('POSTGRES_JDBC_URL', 'jdbc:postgresql://postgres:5432/price_intelligence')
         self.postgres_user = os.getenv('POSTGRES_USER', 'postgres')
         self.postgres_password = os.getenv('POSTGRES_PASSWORD', 'postgres')
+        self.postgres_db = os.getenv('POSTGRES_DB', 'price_intelligence')
+        self.postgres_host = os.getenv('POSTGRES_HOST', 'postgres')
+        self.postgres_port = os.getenv('POSTGRES_PORT', '5432')
+
         self.job_name = job_name
         # Unique Kafka consumer group to avoid reusing committed offsets
         default_group_id = f"price_monitoring_group_{int(time.time())}"

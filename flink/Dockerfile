@@ -5,6 +5,7 @@ RUN wget -P /opt/flink/lib/ https://jdbc.postgresql.org/download/postgresql-42.7
 RUN wget -P /opt/flink/lib/ https://repo.maven.apache.org/maven2/org/apache/flink/flink-connector-jdbc/3.3.0-1.20/flink-connector-jdbc-3.3.0-1.20.jar
 RUN wget -P /opt/flink/lib/ https://repo.maven.apache.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.3.0-1.20/flink-sql-connector-kafka-3.3.0-1.20.jar
 
+# Make sure all JARs are owned by flink user
 RUN chown -R flink:flink /opt/flink/lib
 
 ENV APP_HOME=/opt/flink/app
@@ -13,7 +14,7 @@ WORKDIR $APP_HOME
 
 # Install Python and pip as root user
 RUN apt-get update && \
-    apt-get install -y python3 python3-pip python3-dev build-essential curl unzip && \
+    apt-get install -y python3 python3-pip python3-dev build-essential curl unzip gcc librdkafka-dev && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*

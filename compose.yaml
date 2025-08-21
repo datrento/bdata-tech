@@ -153,6 +153,10 @@ services:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: flink-jobmanager
+
+        jobmanager.memory.process.size: 1800m
+        jobmanager.memory.jvm-overhead.min: 192m
+
         state.backend: filesystem
         state.checkpoints.dir: file:///tmp/flink-checkpoints
         heartbeat.interval: 1000
@@ -184,7 +188,8 @@ services:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: flink-jobmanager
-        taskmanager.numberOfTaskSlots: 3
+        taskmanager.memory.process.size: 2048m
+        taskmanager.numberOfTaskSlots: 4
         state.backend: filesystem
         state.checkpoints.dir: file:///tmp/flink-checkpoints
         heartbeat.interval: 1000
