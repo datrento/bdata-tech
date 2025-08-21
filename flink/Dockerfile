@@ -5,6 +5,9 @@ RUN wget -P /opt/flink/lib/ https://jdbc.postgresql.org/download/postgresql-42.7
 RUN wget -P /opt/flink/lib/ https://repo.maven.apache.org/maven2/org/apache/flink/flink-connector-jdbc/3.3.0-1.20/flink-connector-jdbc-3.3.0-1.20.jar
 RUN wget -P /opt/flink/lib/ https://repo.maven.apache.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.3.0-1.20/flink-sql-connector-kafka-3.3.0-1.20.jar
 
+# Flink SQL Connector for PostgreSQL CDC
+RUN wget -P /opt/flink/lib/ https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-postgres-cdc/3.4.0/flink-sql-connector-postgres-cdc-3.4.0.jar
+
 # Make sure all JARs are owned by flink user
 RUN chown -R flink:flink /opt/flink/lib
 

@@ -16,6 +16,7 @@ class AlertsJob(BaseJob):
         self.t_env.execute_sql("DROP TABLE IF EXISTS platform_products")
         self.t_env.execute_sql("DROP TABLE IF EXISTS external_competitors")
 
+        ## SOURCE TABLES------------------
         # External competitors
         self.t_env.execute_sql(f"""
             CREATE TABLE external_competitors (
@@ -23,13 +24,16 @@ class AlertsJob(BaseJob):
                 name STRING,
                 code STRING
             ) WITH (
-                'connector' = 'jdbc',
-                'url' = '{self.postgres_url}',
-                'table-name' = 'external_competitors',
-                'driver' = 'org.postgresql.Driver',
+                'connector' = 'postgres-cdc',
+                'debezium.snapshot.mode' = 'initial',
+                'hostname' = '{self.postgres_host}',
+                'port' = '{self.postgres_port}',
                 'username' = '{self.postgres_user}',
                 'password' = '{self.postgres_password}',
-                'sink.parallelism' = '1'
+                'database-name' = '{self.postgres_db}',
+                'schema-name' = 'public',
+                'table-name' = 'external_competitors',
+                'slot.name' = 'flink_external_competitors'
             )
         """)
 
@@ -73,13 +77,16 @@ class AlertsJob(BaseJob):
             data_timestamp TIMESTAMP(3),
             collection_timestamp TIMESTAMP(3)
             ) WITH (
-                'connector' = 'jdbc',
-                'url' = '{self.postgres_url}',
-                'table-name' = 'competitor_price_history',
-                'driver' = 'org.postgresql.Driver',
+                'connector' = 'postgres-cdc',
+                'debezium.snapshot.mode' = 'initial',
+                'hostname' = '{self.postgres_host}',
+                'port' = '{self.postgres_port}',
                 'username' = '{self.postgres_user}',
                 'password' = '{self.postgres_password}',
-                'sink.parallelism' = '1'
+                'database-name' = '{self.postgres_db}',
+                'schema-name' = 'public',
+                'table-name' = 'competitor_price_history',
+                'slot.name' = 'flink_competitor_price_history'
             )
         """)
 
@@ -98,16 +105,20 @@ class AlertsJob(BaseJob):
                 is_active BOOLEAN,
                 PRIMARY KEY (sku) NOT ENFORCED
             ) WITH (
-                'connector' = 'jdbc',
-                'url' = '{self.postgres_url}',
-                'table-name' = 'platform_products',
-                'driver' = 'org.postgresql.Driver',
+                'connector' = 'postgres-cdc',
+                'debezium.snapshot.mode' = 'initial',
+                'hostname' = '{self.postgres_host}',
+                'port' = '{self.postgres_port}',
                 'username' = '{self.postgres_user}',
                 'password' = '{self.postgres_password}',
-                'sink.parallelism' = '1'
+                'database-name' = '{self.postgres_db}',
+                'schema-name' = 'public',
+                'table-name' = 'platform_products',
+                'slot.name' = 'flink_platform_products'
             )
         """)
 
+        ## SINK TABLES------------------------
         # Price signals sink table
         self.t_env.execute_sql(f"""
             CREATE TABLE price_signals (
@@ -291,6 +302,8 @@ class AlertsJob(BaseJob):
                 AND current_price > min_price_24h
                 AND ((current_price - min_price_24h) / min_price_24h * 100) > {self.price_increase_24hrs_threshold}
         """
+    
+    # def build_price_increase_24hrs_alerts_perproduct_query(self):
         
 
     def run(self):
