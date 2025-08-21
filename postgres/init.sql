@@ -21,6 +21,7 @@ CREATE TABLE
     IF NOT EXISTS external_competitors (
         id BIGSERIAL PRIMARY KEY,
         name VARCHAR(255) UNIQUE NOT NULL,
+        code VARCHAR(100) NOT NULL,
         website VARCHAR(255) NOT NULL,
         is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -48,6 +49,7 @@ CREATE TABLE
         price DECIMAL(10, 2) NOT NULL,
         in_stock BOOLEAN DEFAULT TRUE,
         source_sku VARCHAR(100),
+        data_timestamp TIMESTAMP NOT NULL,
         collection_timestamp TIMESTAMP NOT NULL,
         FOREIGN KEY (product_sku) REFERENCES platform_products (sku),
         FOREIGN KEY (competitor_id) REFERENCES external_competitors (id)
@@ -99,7 +101,8 @@ CREATE TABLE
         signal_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         is_active BOOLEAN DEFAULT TRUE,
         FOREIGN KEY (product_sku) REFERENCES platform_products (sku),
-        FOREIGN KEY (competitor_id) REFERENCES external_competitors (id)
+        FOREIGN KEY (competitor_id) REFERENCES external_competitors (id),
+        UNIQUE (product_sku, competitor_id, signal_type)
     );
 
 -- Aggregator data table (data from Kafka)
@@ -187,10 +190,10 @@ VALUES
 
 -- Insert external competitors
 INSERT INTO
-    external_competitors (name, website)
+    external_competitors (name, code, website)
 VALUES
-    ('Amazon', 'https://www.amazon.com'),
-    ('Best Buy', 'https://www.bestbuy.com'),
-    ('Ebay', 'https://www.ebay.com'),
-    ('Walmart', 'https://www.walmart.com'),
-    ('Target', 'https://www.target.com') ON CONFLICT (name) DO NOTHING;
+    ('Amazon', 'amazon', 'https://www.amazon.com'),
+    ('Best Buy', 'bestbuy', 'https://www.bestbuy.com'),
+    ('Ebay', 'ebay', 'https://www.ebay.com'),
+    ('Walmart', 'walmart', 'https://www.walmart.com'),
+    ('Target', 'target', 'https://www.target.com') ON CONFLICT (name) DO NOTHING;
