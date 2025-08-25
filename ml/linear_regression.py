@@ -10,34 +10,8 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LassoCV
-# Prefer new RMSE API; provide fallback for older scikit-learn
-try:
-    from sklearn.metrics import mean_absolute_error, root_mean_squared_error
-except Exception:  # pragma: no cover - compatibility path
-    from sklearn.metrics import mean_absolute_error, mean_squared_error as _mean_squared_error
+from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 
-    def root_mean_squared_error(y_true, y_pred):
-        return _mean_squared_error(y_true, y_pred, squared=False)
-
-
-
-def load_price_alerts(days: int = 30) -> pd.DataFrame:
-    engine = get_db_connection()
-    q = text(f"""
-        SELECT 
-            product_sku,
-            competitor_name,
-            previous_price,
-            new_price,
-            price_change,
-            percentage_change,
-            alert_type,
-            alert_timestamp
-        FROM price_alerts
-        WHERE alert_timestamp > NOW() - INTERVAL '{days} days'
-        ORDER BY alert_timestamp
-    """)
-    return pd.read_sql(q, engine)
 
 def load_price_trends(days: int = 30) -> pd.DataFrame:
     engine = get_db_connection()
@@ -56,69 +30,6 @@ def load_price_trends(days: int = 30) -> pd.DataFrame:
     """)
     return pd.read_sql(q, engine)
 
-# FUNCTION NOT USED, BETTER TO TRAIN ON PRICE_TRENDS ONLY
-def merge_dfs(price_alerts: pd.DataFrame, price_trends: pd.DataFrame) -> pd.DataFrame:
-    """Merge price alerts with price trends on (product_sku, competitor_name)
-    when alert_timestamp is within [window_start, window_end].
-
-    Contract:
-    - Inputs: two DataFrames with required columns:
-      price_alerts: product_sku, competitor_name, alert_timestamp, ...
-      price_trends: product_sku, competitor_name, window_start, window_end, ...
-    - Output: DataFrame containing only rows that satisfy the interval condition,
-      with columns from both inputs.
-    - If either input is empty, returns an empty DataFrame with merged columns.
-    """
-    required_alert_cols = {"product_sku", "competitor_name", "alert_timestamp"}
-    required_trend_cols = {"product_sku", "competitor_name", "window_start", "window_end"}
-
-    missing_alert = required_alert_cols - set(price_alerts.columns)
-    missing_trend = required_trend_cols - set(price_trends.columns)
-    if missing_alert:
-        raise ValueError(f"price_alerts missing required columns: {sorted(missing_alert)}")
-    if missing_trend:
-        raise ValueError(f"price_trends missing required columns: {sorted(missing_trend)}")
-
-    # Early exit with consistent columns if any input is empty
-    if price_alerts.empty or price_trends.empty:
-        print("One of the input DataFrames is empty.")
-        return price_alerts.merge(
-            price_trends,
-            on=["product_sku", "competitor_name"],
-            how="inner",
-        )
-
-    # Work on copies to avoid mutating caller's data
-    alerts = price_alerts.copy()
-    trends = price_trends.copy()
-
-    # Ensure datetime types
-    alerts["alert_timestamp"] = pd.to_datetime(alerts["alert_timestamp"], errors="coerce", utc=False)
-    trends["window_start"] = pd.to_datetime(trends["window_start"], errors="coerce", utc=False)
-    trends["window_end"] = pd.to_datetime(trends["window_end"], errors="coerce", utc=False)
-
-    # Drop rows with invalid timestamps to avoid comparison issues
-    alerts = alerts.dropna(subset=["alert_timestamp"]).reset_index(drop=True)
-    trends = trends.dropna(subset=["window_start", "window_end"]).reset_index(drop=True)
-
-    # Join on keys, then filter by interval condition
-    merged = alerts.merge(
-        trends,
-        on=["product_sku", "competitor_name"],
-        how="inner",
-        suffixes=("", "_trend"),
-    )
-
-    if merged.empty:
-        print("Merged DataFrame is empty after initial join.")
-        return merged
-
-    mask = (merged["alert_timestamp"] >= merged["window_start"]) & (
-        merged["alert_timestamp"] <= merged["window_end"]
-    )
-    result = merged.loc[mask].reset_index(drop=True)
-    return result
-
 
 def predict_avg_price_for_product(
     product_sku: str,
@@ -127,6 +38,7 @@ def predict_avg_price_for_product(
     days: int = 90,
     horizon: int = 1,
     alphas: np.ndarray | None = None,
+    trends_df: pd.DataFrame | None = None,
 ) -> dict:
     """
     Predict the next-window average price for a single product using a simple
@@ -146,7 +58,8 @@ def predict_avg_price_for_product(
     if alphas is None:
         alphas = np.logspace(-3, 1, 30)
 
-    trends = load_price_trends(days=days)
+    # Allow passing a preloaded DataFrame to avoid re-reading from DB in orchestrated runs
+    trends = trends_df if trends_df is not None else load_price_trends(days=days)
     if trends.empty:
         raise ValueError("No trend data available for training.")
 
@@ -167,7 +80,7 @@ def predict_avg_price_for_product(
     df["window_end"] = pd.to_datetime(df["window_end"], errors="coerce", utc=True)
     df = df.dropna(subset=["window_end"]).sort_values("window_end").reset_index(drop=True)
 
-    # Basic feature engineering: lags of avg_price and price_volatility
+    # common way to let a linear model “see” recent history: lags of avg_price and price_volatility
     max_lag = 3
     for lag in range(1, max_lag + 1):
         df[f"avg_price_lag{lag}"] = df["avg_price"].shift(lag)
@@ -197,8 +110,8 @@ def predict_avg_price_for_product(
             "product_sku": product_sku,
             "competitor_name": competitor_name,
             "horizon": horizon,
-            "prediction": last_avg,
-            "last_observed_avg_price": last_avg,
+            "prediction": round(last_avg, 2),
+            "last_observed_avg_price": round(last_avg, 2),
             "n_samples": int(len(model_df)),
             "features_used": feature_cols_num + feature_cols_cat,
             "alpha": None,
@@ -238,8 +151,8 @@ def predict_avg_price_for_product(
         y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
         pipe.fit(X_train, y_train)
         y_pred = pipe.predict(X_test)
-    maes.append(mean_absolute_error(y_test, y_pred))
-    rmses.append(root_mean_squared_error(y_test, y_pred))
+        maes.append(mean_absolute_error(y_test, y_pred))
+        rmses.append(root_mean_squared_error(y_test, y_pred))
 
     # Fit on all data to forecast next horizon
     pipe.fit(X, y)
@@ -260,13 +173,13 @@ def predict_avg_price_for_product(
         "product_sku": product_sku,
         "competitor_name": competitor_name,
         "horizon": horizon,
-        "prediction": pred,
-        "last_observed_avg_price": float(df["avg_price"].iloc[-1]),
+        "prediction": round(pred, 2),
+        "last_observed_avg_price": round(float(df["avg_price"].iloc[-1]), 2),
         "n_samples": int(len(model_df)),
         "features_used": feature_cols_num + feature_cols_cat,
-        "alpha": float(pipe.named_steps["model"].alpha_),
-        "cv_mae": float(np.mean(maes)) if maes else None,
-        "cv_rmse": float(np.mean(rmses)) if rmses else None,
+        "alpha": round(float(pipe.named_steps["model"].alpha_), 2),
+        "cv_mae": (round(float(np.mean(maes)), 2) if maes else None),
+        "cv_rmse": (round(float(np.mean(rmses)), 2) if rmses else None),
     }
 
 if __name__ == "__main__":
