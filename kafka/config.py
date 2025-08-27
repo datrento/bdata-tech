@@ -31,7 +31,7 @@ DATA_API_USER_BEHAVIOR = f"{BASE_API}/user-behavior/data"
 
 # Collection intervals
 
-COLLECTION_INTERVAL = int(os.getenv('COLLECTION_INTERVAL', 15))  # Default to 15 seconds
+COLLECTION_INTERVAL = int(os.getenv('COLLECTION_INTERVAL', 90))  # Default to 90 seconds (allows CDC lag)
 USER_BEHAVIOR_INTERVAL = int(os.getenv('USER_BEHAVIOR_INTERVAL', 60))  # Default to 1 minute
 
 PRODUCTS_MONITORING = [

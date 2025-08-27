@@ -202,6 +202,13 @@ if __name__ == "__main__":
             create_topic_if_not_exists(TOPICS['MARKET_DATA_RAW'])
             create_topic_if_not_exists(TOPICS['COMPETITOR_PRICES'])
             create_topic_if_not_exists(TOPICS['AGGREGATOR_PRICES'])
+
+            # Create upsert-Kafka topics
+            create_topic_if_not_exists('dim-external-competitors')
+            create_topic_if_not_exists('dim-platform-products')
+            create_topic_if_not_exists('external_competitors_dim')
+            create_topic_if_not_exists('dim-user-behavior-summary')
+            create_topic_if_not_exists('dim-price-signals')
             return True
         except Exception as e:
             print(f"Error setting up topics: {e}")

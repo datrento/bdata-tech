@@ -26,16 +26,18 @@ async def simulate_user_behavior_signals(product_sku: str) -> Dict:
     daily_base = base_demand.get(product_sku, 400)
     
     # Add realistic variations
-    page_views = daily_base + random.randint(-100, 200)
+    page_views = daily_base + random.randint(-100, 200) 
     searches = int(page_views * random.uniform(0.3, 0.7))
     cart_adds = int(page_views * random.uniform(0.05, 0.15))
     purchases = int(cart_adds * random.uniform(0.15, 0.35))
     price_comparisons = int(page_views * random.uniform(0.1, 0.3))
+    dwell_seconds = round(float(random.randint(10, 60) + random.uniform(0, 10)), 4) # 10.00-70.00 seconds
+    unique_visitors = int(page_views * random.uniform(0.1, 0.2)) # 10-20% of page views
     
-    # Return RAW DATA ONLY - no calculated indicators
-    # Conversion rates, abandonment rates, etc. should be calculated downstream
     return {
         "page_views": page_views,
+        "unique_visitors": unique_visitors,
+        "dwell_seconds": dwell_seconds,
         "searches": searches,
         "cart_additions": cart_adds,
         "purchases": purchases,

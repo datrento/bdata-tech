@@ -53,7 +53,8 @@ class UserBehaviorProducer(BaseProducer):
             # Generate a unique key for the message
             api_collection_timestamp = user_behavior.get('collection_timestamp', datetime.now().astimezone().isoformat())
             message_key = self._generate_message_key(product_sku)
-
+            
+            api_collection_ts_ms = int(datetime.fromisoformat(api_collection_timestamp).timestamp() * 1000)
             data_timestamp = user_behavior.get('data_timestamp', api_collection_timestamp)
             data_ts_ms = int(datetime.fromisoformat(data_timestamp).timestamp() * 1000)
 
@@ -66,6 +67,7 @@ class UserBehaviorProducer(BaseProducer):
                     **user_behavior['user_behavior'],
                     'api_collection_timestamp': api_collection_timestamp,
                     'data_ts_ms': data_ts_ms,
+                    'api_collection_ts_ms': api_collection_ts_ms,
                     'collection_source': 'user_behavior_api',
                     'data_type': 'user_interaction'
                 },
@@ -147,6 +149,8 @@ if __name__ == "__main__":
     else:
         print("Failed to set up Kafka topics. Exiting.")
         sys.exit(1)
+
+
 
 
 
