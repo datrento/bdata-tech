@@ -26,6 +26,27 @@ class BaseJob(ABC):
         self.t_env.get_config().get_configuration().set_string(
             "execution.checkpointing.interval", "10s"
         )
+        # Make checkpoints more resilient under backpressure/IO
+        self.t_env.get_config().get_configuration().set_string(
+            "execution.checkpointing.timeout", "300s"
+        )
+        self.t_env.get_config().get_configuration().set_string(
+            "execution.checkpointing.min-pause", "10s"
+        )
+        self.t_env.get_config().get_configuration().set_string(
+            "execution.checkpointing.unaligned", "true"
+        )
+        # Prefer unaligned checkpoints immediately under backpressure
+        self.t_env.get_config().get_configuration().set_string(
+            "execution.checkpointing.aligned-checkpoint-timeout", "0s"
+        )
+        # Allow a few transient checkpoint failures without failing the job
+        self.t_env.get_config().get_configuration().set_string(
+            "execution.checkpointing.tolerable-failed-checkpoints", "3"
+        )
+        self.t_env.get_config().get_configuration().set_string(
+            "state.checkpoints.num-retained", "2"
+        )
 
         # Set Flink local time zone (affects TIMESTAMP_LTZ semantics)
         flink_tz = os.getenv('FLINK_LOCAL_TIME_ZONE', 'UTC')
@@ -37,7 +58,6 @@ class BaseJob(ABC):
         print(f"Using Kafka bootstrap servers: {self.kafka_bootstrap_servers}")
         print(f"Using PostgreSQL URL: {self.postgres_url}")
         print(f"Flink local time zone: {flink_tz}")
-        print(f"Kafka consumer group id: {self.kafka_group_id}")
 
     @abstractmethod
     def setup_tables(self):

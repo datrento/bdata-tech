@@ -111,29 +111,65 @@ if selected_competitors:
     filtered = filtered[filtered['competitor_name'].isin(selected_competitors)]
 
 # --------------------
-# KPIs
+# KPIs (focused, selection-aware)
 # --------------------
-avg_price_now = filtered['avg_price'].mean()
-max_volatility = filtered['price_volatility'].max()
-
-# Calculate trend direction distribution
+# Trend distribution
 trend_counts = filtered['trend_direction'].value_counts(normalize=True)
 upward_trend_pct = trend_counts.get('up', 0) * 100
 downward_trend_pct = trend_counts.get('down', 0) * 100
+stable_trend_pct = max(0.0, 100.0 - upward_trend_pct - downward_trend_pct)
+
+# Compute top movers (net % change) and most volatile pair
+def compute_top_movers(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["product_sku", "competitor_name", "avg_price_first", "avg_price_last", "net_change", "pct_change"])
+    ordered = df.sort_values(['product_sku', 'competitor_name', 'window_start'])
+    first = ordered.groupby(['product_sku', 'competitor_name']).first().reset_index()[['product_sku', 'competitor_name', 'avg_price']]
+    last = ordered.groupby(['product_sku', 'competitor_name']).last().reset_index()[['product_sku', 'competitor_name', 'avg_price']]
+    merged = first.merge(last, on=['product_sku', 'competitor_name'], suffixes=('_first', '_last'))
+    merged['net_change'] = merged['avg_price_last'] - merged['avg_price_first']
+    merged['pct_change'] = (merged['net_change'] / merged['avg_price_first'].replace(0, pd.NA)) * 100
+    merged = merged.dropna(subset=['pct_change'])
+    return merged
+
+movers = compute_top_movers(filtered)
+most_volatile = (
+    filtered.groupby(['product_sku', 'competitor_name'])['price_volatility']
+    .mean()
+    .reset_index()
+    .sort_values('price_volatility', ascending=False)
+)
+
+top_inc_label, top_inc_val = "—", None
+top_dec_label, top_dec_val = "—", None
+volatile_label, volatile_val = "—", None
+
+if not movers.empty:
+    top_inc = movers.sort_values('pct_change', ascending=False).iloc[0]
+    top_inc_label = f"{top_inc['product_sku']} • {top_inc['competitor_name']}"
+    top_inc_val = f"{top_inc['pct_change']:.2f}%"
+    top_dec = movers.sort_values('pct_change', ascending=True).iloc[0]
+    top_dec_label = f"{top_dec['product_sku']} • {top_dec['competitor_name']}"
+    top_dec_val = f"{top_dec['pct_change']:.2f}%"
+
+if not most_volatile.empty:
+    mv = most_volatile.iloc[0]
+    volatile_label = f"{mv['product_sku']} • {mv['competitor_name']}"
+    volatile_val = f"{mv['price_volatility']:.2f}"
 
 st.markdown("### Key Performance Indicators")
 st.markdown("""
-These metrics provide a quick overview of the current market situation:
-- **Avg Price**: Current average price across all selected products and competitors
-- **Max Volatility**: Highest price fluctuation detected (higher = more unstable pricing)
-- **Trend Direction**: Percentage of prices trending upward or downward
+Focused metrics for the selected timeframe/products/competitors (5-minute windows):
+- Top net increases/decreases identify the biggest movers
+- Most volatile pair shows highest within-window price variability
+- Trend share summarizes direction across windows
 """)
 
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-kpi1.metric("Avg Price", f"${avg_price_now:.2f}", help="Average price across all selected products and competitors")
-kpi2.metric("Max Volatility", f"{max_volatility:.2f}", help="Highest price volatility detected (higher values indicate unstable pricing)")
-kpi3.metric("Upward Price Trend %", f"{upward_trend_pct:.2f}%", help="Percentage of prices trending upward")
-kpi4.metric("Downward Price Trend %", f"{downward_trend_pct:.2f}%", help="Percentage of prices trending downward")
+kpi1.metric("Top Increase (net %)", top_inc_val or "—", help=top_inc_label)
+kpi2.metric("Top Decrease (net %)", top_dec_val or "—", help=top_dec_label)
+kpi3.metric("Most Volatile Pair (σ)", volatile_val or "—", help=volatile_label)
+kpi4.metric("Up / Down / Stable", f"{upward_trend_pct:.0f}% / {downward_trend_pct:.0f}% / {stable_trend_pct:.0f}%", help="Share of 5-minute windows across the selection")
 
 # --------------------
 # Main Trend Chart (Event Time)
@@ -278,19 +314,69 @@ fig_vol_heat.update_layout(
 st.plotly_chart(fig_vol_heat, use_container_width=True)
 
 # --------------------
+# Summary from current selection
+# --------------------
+st.subheader("Summary for Selected Data (5-minute windows)")
+
+trend_counts_abs = filtered['trend_direction'].value_counts()
+upward_trend_count = int(trend_counts_abs.get('up', 0))
+downward_trend_count = int(trend_counts_abs.get('down', 0))
+stable_trend_count = int(trend_counts_abs.get('stable', 0))
+
+cs1, cs2, cs3 = st.columns(3)
+cs1.metric("Windows Up", f"{upward_trend_count}")
+cs2.metric("Windows Down", f"{downward_trend_count}")
+cs3.metric("Windows Stable", f"{stable_trend_count}")
+
+def compute_top_movers(df: pd.DataFrame, top_n: int = 5) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["product_sku", "competitor_name", "first_price", "last_price", "net_change", "pct_change"])
+    ordered = df.sort_values(['product_sku', 'competitor_name', 'window_start'])
+    first = ordered.groupby(['product_sku', 'competitor_name']).first().reset_index()[['product_sku', 'competitor_name', 'avg_price']]
+    last = ordered.groupby(['product_sku', 'competitor_name']).last().reset_index()[['product_sku', 'competitor_name', 'avg_price']]
+    merged = first.merge(last, on=['product_sku', 'competitor_name'], suffixes=('_first', '_last'))
+    merged['net_change'] = merged['avg_price_last'] - merged['avg_price_first']
+    merged['pct_change'] = (merged['net_change'] / merged['avg_price_first'].replace(0, pd.NA)) * 100
+    merged = merged.dropna(subset=['pct_change'])
+    return merged
+
+tm = compute_top_movers(filtered)
+col_inc, col_dec = st.columns(2)
+with col_inc:
+    st.markdown("**Top Increases (net %)**")
+    if not tm.empty:
+        st.dataframe(
+            tm.sort_values('pct_change', ascending=False).head(5)[['product_sku', 'competitor_name', 'pct_change']]
+            .rename(columns={'product_sku': 'Product SKU', 'competitor_name': 'Competitor', 'pct_change': 'Net %'}),
+            use_container_width=True
+        )
+    else:
+        st.info("No data.")
+with col_dec:
+    st.markdown("**Top Decreases (net %)**")
+    if not tm.empty:
+        st.dataframe(
+            tm.sort_values('pct_change', ascending=True).head(5)[['product_sku', 'competitor_name', 'pct_change']]
+            .rename(columns={'product_sku': 'Product SKU', 'competitor_name': 'Competitor', 'pct_change': 'Net %'}),
+            use_container_width=True
+        )
+    else:
+        st.info("No data.")
+
+# --------------------
 # Data Table
 # --------------------
 st.subheader("Detailed Trend Data")
 st.markdown("""
-This table provides the raw data behind the visualizations:
+This table provides the raw data behind the visualizations (5-minute windows):
 - **Avg Price**: The average price during each 5-minute window
 - **Price Volatility**: Measure of price instability (higher = more changes)
-- **Trend Direction**: Whether prices are trending up, down, or stable
+- **Trend**: Whether prices are trending up, down, or stable
 - **Window Start/End**: The time period for the trend calculation
 """)
 
 st.dataframe(
-    filtered,
+    filtered.assign(trend=lambda d: d['trend_direction'].map({'up': '🟢 up', 'down': '🔴 down', 'stable': '⚪ stable'})),
     use_container_width=True,
     column_config={
         'avg_price': st.column_config.NumberColumn("Avg Price", format="$%.2f", help="Average price during this time window"),
@@ -298,5 +384,13 @@ st.dataframe(
         'window_start': st.column_config.DatetimeColumn("Window Start", format="DD/MM/YYYY HH:mm", help="Start time of the 5-minute window"),
         'window_end': st.column_config.DatetimeColumn("Window End", format="DD/MM/YYYY HH:mm", help="End time of the 5-minute window"),
         'trend_direction': st.column_config.TextColumn("Trend Direction", help="Direction of price movement (up, down, or stable)"),
+        'trend': st.column_config.TextColumn("Trend"),
     }
+)
+
+st.download_button(
+    label="Download CSV",
+    data=filtered.to_csv(index=False).encode('utf-8'),
+    file_name=f"price_trends_{days}d.csv",
+    mime='text/csv'
 )

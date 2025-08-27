@@ -10,6 +10,9 @@ CREATE TABLE
         min_viable_price DECIMAL(10, 2) NULL, -- Minimum viable price
         current_price DECIMAL(10, 2) NOT NULL, -- Actual selling price
         price_sensitivity VARCHAR(50) NULL, -- Price sensitivity
+        price_elasticity DECIMAL(6, 3) NULL, -- Estimated own-price elasticity
+        sensitivity_last_updated TIMESTAMP NULL,
+        sensitivity_observations INT DEFAULT 0,
         in_stock BOOLEAN DEFAULT TRUE,
         is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -52,23 +55,8 @@ CREATE TABLE
         data_timestamp TIMESTAMP NOT NULL,
         collection_timestamp TIMESTAMP NOT NULL,
         FOREIGN KEY (product_sku) REFERENCES platform_products (sku),
-        FOREIGN KEY (competitor_id) REFERENCES external_competitors (id)
-    );
-
--- Simple price alerts table for Flink
-CREATE TABLE
-    IF NOT EXISTS price_alerts (
-        id BIGSERIAL PRIMARY KEY,
-        product_sku VARCHAR(100) NOT NULL,
-        competitor_name VARCHAR(255) NOT NULL,
-        previous_price DECIMAL(10, 2),
-        new_price DECIMAL(10, 2),
-        price_change DECIMAL(10, 2),
-        percentage_change DECIMAL(5, 2),
-        alert_type VARCHAR(50),
-        alert_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        processed BOOLEAN DEFAULT FALSE,
-        FOREIGN KEY (product_sku) REFERENCES platform_products (sku)
+        FOREIGN KEY (competitor_id) REFERENCES external_competitors (id),
+        UNIQUE (product_sku, competitor_id, data_timestamp)
     );
 
 -- Time-based price trends table
@@ -82,7 +70,8 @@ CREATE TABLE
         avg_price DECIMAL(10, 2) NOT NULL,
         price_volatility DECIMAL(5, 2) NOT NULL,
         trend_direction VARCHAR(50) NOT NULL,
-        FOREIGN KEY (product_sku) REFERENCES platform_products (sku)
+        FOREIGN KEY (product_sku) REFERENCES platform_products (sku),
+        UNIQUE (product_sku, competitor_name, window_start, window_end)
     );
 
 -- Price signals table for real-time pricing insights
@@ -105,6 +94,7 @@ CREATE TABLE
         UNIQUE (product_sku, competitor_id, signal_type)
     );
 
+
 -- Aggregator data table (data from Kafka)
 CREATE TABLE
     IF NOT EXISTS aggregator_data (
@@ -120,6 +110,111 @@ CREATE TABLE
         FOREIGN KEY (product_sku) REFERENCES platform_products (sku)
     );
 
+-- Price-demand observations for elasticity estimation
+CREATE TABLE
+    IF NOT EXISTS price_demand_observations (
+        id BIGSERIAL PRIMARY KEY,
+        sku VARCHAR(100) NOT NULL,
+        observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        price DECIMAL(10, 2) NOT NULL,
+        demand INT NOT NULL
+    );
+CREATE INDEX IF NOT EXISTS idx_pdo_sku_time ON price_demand_observations (sku, observed_at DESC);
+
+-- Product market summary table
+CREATE TABLE
+    IF NOT EXISTS product_market_summary (
+        product_sku VARCHAR(100) PRIMARY KEY,
+        cheapest_competitor_id BIGINT NOT NULL,
+        cheapest_price DECIMAL(10, 2) NOT NULL,
+        platform_price DECIMAL(10, 2) NOT NULL,
+        gap_pct DECIMAL(6, 2) NOT NULL,
+        competitor_count INT NOT NULL,
+        in_stock_competitor_count INT NOT NULL,
+        summary_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_sku) REFERENCES platform_products (sku),
+        FOREIGN KEY (cheapest_competitor_id) REFERENCES external_competitors (id)
+    );
+
+-- Platform product price history table
+CREATE TABLE
+    IF NOT EXISTS platform_product_price_history (
+        id BIGSERIAL PRIMARY KEY,
+        sku VARCHAR(100) NOT NULL,
+        old_price DECIMAL(10, 2),
+        adjusted_price DECIMAL(10, 2) NOT NULL,
+        change_type VARCHAR(32),
+        changed_by VARCHAR(64),
+        change_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        notes TEXT,
+        FOREIGN KEY (sku) REFERENCES platform_products (sku)
+    );
+
+-- User behavior events table
+CREATE TABLE
+    IF NOT EXISTS user_behavior_events (
+        id BIGSERIAL PRIMARY KEY,
+        product_sku VARCHAR(100) NOT NULL,
+        page_views BIGINT NOT NULL,
+        unique_visitors BIGINT NOT NULL,
+        dwell_seconds DOUBLE PRECISION NOT NULL,
+        searches BIGINT NOT NULL,
+        cart_additions BIGINT NOT NULL,
+        purchases BIGINT NOT NULL, 
+        price_comparisons BIGINT NOT NULL,
+        data_timestamp TIMESTAMP NOT NULL,
+        collection_timestamp TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_sku) REFERENCES platform_products (sku)
+    );
+
+-- User behavior summary table
+CREATE TABLE
+    IF NOT EXISTS user_behavior_summary (
+        id BIGSERIAL PRIMARY KEY,
+        product_sku VARCHAR(100) NOT NULL,
+        window_start TIMESTAMP NOT NULL,
+        window_end TIMESTAMP NOT NULL,
+        page_views BIGINT NOT NULL,
+        searches BIGINT NOT NULL,
+        cart_additions BIGINT NOT NULL,
+        purchases BIGINT NOT NULL, 
+        price_comparisons BIGINT NOT NULL,
+        search_rate DOUBLE PRECISION NOT NULL,
+        search_cart_rate DOUBLE PRECISION NOT NULL,
+        cart_purchase_rate DOUBLE PRECISION NOT NULL, 
+        view_compare_rate DOUBLE PRECISION NOT NULL,
+        avg_dwell_seconds DOUBLE PRECISION NOT NULL, 
+        unique_visitors BIGINT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_sku) REFERENCES platform_products (sku)
+    );
+
+-- Demand vs Signals table
+CREATE TABLE
+    IF NOT EXISTS demand_vs_signals (
+        id BIGSERIAL NOT NULL,
+        product_sku VARCHAR(100) NOT NULL,
+        window_start TIMESTAMP NOT NULL,
+        window_end TIMESTAMP NOT NULL,
+        engagement_delta DOUBLE PRECISION NOT NULL,
+        undercut_cnt BIGINT NOT NULL,
+        abrupt_inc_cnt BIGINT NOT NULL,
+        overpriced_cnt BIGINT NOT NULL,
+        avg_undercut_gap_pct DECIMAL(5, 2) NOT NULL,
+        avg_abrupt_inc_gap_pct DECIMAL(5, 2) NOT NULL,
+        avg_overpriced_gap_pct DECIMAL(5, 2) NOT NULL,
+        price_position VARCHAR(50) NOT NULL,
+        score DOUBLE PRECISION NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (product_sku, window_start, window_end)
+    );
+COMMENT ON COLUMN demand_vs_signals.score IS 'Score is a combination of engagement delta(using search rate as an engagement metric) and undercut count. Formula: engagement_delta + (undercut_cnt * 0.01)';
+
+
 -- Create indexes for efficient querying
 CREATE INDEX idx_price_signals_active ON price_signals (is_active, signal_timestamp DESC)
 WHERE
@@ -134,66 +229,14 @@ CREATE INDEX idx_price_signals_type ON price_signals (signal_type, signal_timest
 -- Performance indexes for faster queries
 CREATE INDEX idx_price_trends_time ON price_trends (window_start, window_end);
 
-CREATE INDEX IF NOT EXISTS idx_price_alerts_unprocessed ON price_alerts (processed, alert_timestamp DESC)
-WHERE
-    processed = FALSE;
-
 CREATE INDEX IF NOT EXISTS idx_competitor_price_sku_time ON competitor_price_history (product_sku, collection_timestamp);
 
-CREATE INDEX IF NOT EXISTS idx_price_alerts_unprocessed ON price_alerts (processed)
-WHERE
-    processed = FALSE;
+-- add indexes for the user behaviour, user behavior summary and demand vs price signals
+CREATE INDEX idx_user_behavior_events_time ON user_behavior_events (data_timestamp, collection_timestamp);
+CREATE INDEX idx_user_behavior_summary_time ON user_behavior_summary (window_start, window_end);
+CREATE INDEX idx_demand_vs_signals_time ON demand_vs_signals (window_start, window_end);
 
--- Insert platform products
-INSERT INTO
-    platform_products (
-        sku,
-        name,
-        category,
-        brand,
-        cost,
-        min_viable_price,
-        current_price,
-        price_sensitivity
-    )
-VALUES
-    (
-        'IPHONE-15-PRO-128',
-        'iPhone 15 Pro 128GB',
-        'Smartphones',
-        'Apple',
-        850.00,
-        900.00,
-        950.00,
-        'low'
-    ),
-    (
-        'MACBOOK-AIR-M2-13',
-        'MacBook Air M2 13-inch',
-        'Laptops',
-        'Apple',
-        950.00,
-        1000.00,
-        1050.00,
-        'low'
-    ),
-    (
-        'PS5-CONSOLE',
-        'PlayStation 5 Console',
-        'Gaming',
-        'Sony',
-        400.00,
-        450.00,
-        500.00,
-        'low'
-    ) ON CONFLICT (sku) DO NOTHING;
-
--- Insert external competitors
-INSERT INTO
-    external_competitors (name, code, website)
-VALUES
-    ('Amazon', 'amazon', 'https://www.amazon.com'),
-    ('Best Buy', 'bestbuy', 'https://www.bestbuy.com'),
-    ('Ebay', 'ebay', 'https://www.ebay.com'),
-    ('Walmart', 'walmart', 'https://www.walmart.com'),
-    ('Target', 'target', 'https://www.target.com') ON CONFLICT (name) DO NOTHING;
+-- Ensure CDC provides before images for UPDATE/DELETE
+ALTER TABLE IF EXISTS public.price_signals REPLICA IDENTITY FULL;
+ALTER TABLE IF EXISTS public.platform_products REPLICA IDENTITY FULL;
+ALTER TABLE IF EXISTS public.user_behavior_summary REPLICA IDENTITY FULL;

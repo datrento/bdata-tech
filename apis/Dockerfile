@@ -9,11 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python deps first (better caching)
-COPY apis/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir --disable-pip-version-check -r requirements.txt
 
 # Copy source code
-COPY apis/ .
+COPY . .
 
 # Expose port
 EXPOSE 8000

@@ -89,6 +89,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql # Initialize database with SQL script and postgres will run it
       - ./postgres/init-cdc.sh:/docker-entrypoint-initdb.d/init-cdc.sh # CDC configuration script
+      - ./postgres/seed.sql:/docker-entrypoint-initdb.d/seed.sql # Seed data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: 5s
@@ -113,8 +114,8 @@ services:
   # Data API service for collecting market data
   market-data-api:
     build:
-      context: .
-      dockerfile: apis/Dockerfile
+      context: ./apis
+      dockerfile: Dockerfile
     container_name: market-data-collection-api
     ports:
       - "${DATA_API_PORT}:8000"
@@ -167,10 +168,17 @@ services:
         execution.shutdown-on-application-finish: false
       - FLINK_LOCAL_TIME_ZONE=Europe/Rome
       - TZ=Europe/Rome
-
-      - ALERT_PERCENT_THRESHOLD=${ALERT_PERCENT_THRESHOLD}
-      - KAFKA_GROUP_ID=price_monitoring_group
-      - KAFKA_TOPIC=competitor-prices
+      - ALERTS_KAFKA_STARTUP_MODE=latest-offset
+      - UNDERCUT_PERCENT_THRESHOLD=${UNDERCUT_PERCENT_THRESHOLD}
+      - OVERPRICED_PERCENT_THRESHOLD=${OVERPRICED_PERCENT_THRESHOLD}
+      - PRICE_INCREASE_24HRS_THRESHOLD=${PRICE_INCREASE_24HRS_THRESHOLD}
+      - KAFKA_TOPIC=${COMPETITOR_PRICES}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/overview"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     volumes:
       - ./flink:/opt/flink/app
       - flink_data:/tmp/
@@ -189,8 +197,8 @@ services:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: flink-jobmanager
-        taskmanager.memory.process.size: 2048m
-        taskmanager.numberOfTaskSlots: 4
+        taskmanager.memory.process.size: 3072m
+        taskmanager.numberOfTaskSlots: 8
         state.backend: filesystem
         state.checkpoints.dir: file:///tmp/flink-checkpoints
         heartbeat.interval: 1000
@@ -254,7 +262,7 @@ services:
     environment:
       - POSTGRES_URL=${POSTGRES_URL}
       - ALERT_PERCENT_THRESHOLD=${ALERT_PERCENT_THRESHOLD}
-      - UNDERCUT_THRESHOLD=${UNDERCUT_THRESHOLD}
+      - UNDERCUT_PERCENT_THRESHOLD=${UNDERCUT_PERCENT_THRESHOLD}
       - OVERPRICED_PERCENT_THRESHOLD=${OVERPRICED_PERCENT_THRESHOLD}
       - PRICE_INCREASE_24HRS_THRESHOLD=${PRICE_INCREASE_24HRS_THRESHOLD}
     depends_on:
@@ -269,6 +277,36 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+
+  # Price sensitivity updater (ml-based elasticity)
+  price-sensitivity-updater:
+    build:
+      context: ./ml_services/price_elasticity
+      dockerfile: Dockerfile
+    container_name: price-sensitivity-updater
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - PRICE_SENSITIVITY_REFRESH_SEC=60
+      - DATA_API_INTERNAL_URL=${DATA_API_INTERNAL_URL}
+      - MIN_ELASTICITY_OBSERVATIONS=${MIN_ELASTICITY_OBSERVATIONS}
+    depends_on:
+      kafka:
+        condition: service_healthy
+      market-data-api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      flink-jobmanager:
+        condition: service_healthy
+    command: ["python", "price_sensitivity_updater.py"]
+    volumes:
+      - ./services/price_elasticity:/price_elasticity
+    networks:
+      - common-network
 
 volumes:
   kafka-data:

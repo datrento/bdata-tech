@@ -1,0 +1,8 @@
+# requirements.txt
+psycopg2-binary==2.9.9
+SQLAlchemy==2.0.32
+numpy
+faker
+pandas
+confluent-kafka
+httpx
