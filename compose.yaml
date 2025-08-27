@@ -115,6 +115,7 @@ services:
   market-data-api:
     image: abiget/market-data-api:0.1
     container_name: market-data-collection-api
+    platform: linux/amd64
     ports:
       - "${DATA_API_PORT}:8000"
     environment:
@@ -141,6 +142,7 @@ services:
   flink-jobmanager:
     image: abiget/market-flink:0.1
     container_name: flink-jobmanager
+    platform: linux/amd64
     ports:
       - "8081:8081"  # Flink Web UI
     command: jobmanager
@@ -185,6 +187,7 @@ services:
   flink-taskmanager:
     image: abiget/market-flink:0.1
     container_name: flink-taskmanager
+    platform: linux/amd64
     command: taskmanager
     depends_on:
       - flink-jobmanager
@@ -212,6 +215,7 @@ services:
   market-data-producer:
     image: abiget/market-data-producer:0.1
     container_name: market-data-producer
+    platform: linux/amd64
     depends_on:
       kafka:
         condition: service_healthy
@@ -231,6 +235,7 @@ services:
   user-behavior-producer:
     image: abiget/market-data-producer:0.1
     container_name: user-behavior-producer
+    platform: linux/amd64
     depends_on:
       kafka:
         condition: service_healthy
@@ -249,6 +254,7 @@ services:
   dashboard:
     image: abiget/price-intelligence-dashboard:0.1
     container_name: price-intelligence-dashboard
+    platform: linux/amd64
     ports:
       - "8501:8501"
     environment:
@@ -274,6 +280,7 @@ services:
   price-sensitivity-updater:
     image: abiget/price-sensitivity-updater:0.2
     container_name: price-sensitivity-updater
+    platform: linux/amd64
     environment:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
