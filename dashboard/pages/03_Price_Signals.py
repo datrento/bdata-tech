@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from db import get_db_connection
+import os
 from sqlalchemy import text
 
 # Set page configuration
@@ -46,7 +47,7 @@ st.markdown("""
 st.title("Price Signals")
 st.markdown("""
 <div class="info-box">
-Deep-dive into actionable price signals. Use filters to triage by type, priority, category, and competitor. Sequential changes are excluded.
+Deep-dive into actionable price signals. Use filters to triage by type, priority, category, and competitor.
 </div>
 """, unsafe_allow_html=True)
 
@@ -131,6 +132,22 @@ with col6:
     sel_priorities = st.multiselect("Priority", options=[1, 2, 3], default=[1, 2, 3])
 with col7:
     min_gap = st.number_input("Min |gap %|", min_value=0.0, max_value=100.0, value=0.0, step=0.5, help="Absolute percentage difference threshold")
+# Show compact signal rules near filters
+try:
+    u_thr = float(os.getenv('UNDERCUT_PERCENT_THRESHOLD', '5'))
+    o_thr = float(os.getenv('OVERPRICED_PERCENT_THRESHOLD', '5'))
+    a_thr = float(os.getenv('PRICE_INCREASE_24HRS_THRESHOLD', '10'))
+    st.caption("Signal rules")
+    st.markdown(
+        f"<div class='status-row'>"
+        f"<span class='status-chip' title='Competitor below our price by at least this gap'>Undercut ≥ {u_thr:.1f}%</span>"
+        f"<span class='status-chip' title='Our price below competitor by at least this gap'>Overpriced ≥ {o_thr:.1f}%</span>"
+        f"<span class='status-chip' title='Increase from recent minimum within 24h'>Abrupt Increase ≥ {a_thr:.1f}%</span>"
+        f"</div>",
+        unsafe_allow_html=True
+    )
+except Exception:
+    pass
 
 r1, r2, r3 = st.columns([1, 2, 1])
 with r3:
