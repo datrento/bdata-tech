@@ -174,7 +174,7 @@ def compute_elasticity(engine: Engine, sku: str, lookback_hours: int = 72, min_e
     return float(b), obs_count
 
 
-def update_sensitivity_from_elasticity(engine: Engine, logger: logging.Logger, min_elasticity_observations: int = 5) -> None:
+def update_sensitivity_from_elasticity(engine: Engine, logger: logging.Logger, min_elasticity_observations: int = 5, lookback_hours: int = 72) -> None:
     # Get all SKUs
     with engine.connect() as conn:
         skus = [r[0] for r in conn.execute(text("SELECT sku FROM platform_products WHERE is_active = TRUE")).all()]
@@ -186,7 +186,7 @@ def update_sensitivity_from_elasticity(engine: Engine, logger: logging.Logger, m
 
     updates: List[Tuple[str, str, float, int]] = []
     for sku in skus:
-        e, n_obs = compute_elasticity(engine, sku, min_elasticity_observations=min_elasticity_observations)
+        e, n_obs = compute_elasticity(engine, sku, min_elasticity_observations=min_elasticity_observations, lookback_hours=lookback_hours)
         if e is None:
             continue
         # More negative elasticity => more sensitive
@@ -254,6 +254,7 @@ def main() -> None:
     ensure_tables_exist(engine)
     rollup_minutes = int(get_env("ELASTICITY_ROLLUP_MINUTES", "60"))
     min_elasticity_observations = int(get_env("MIN_ELASTICITY_OBSERVATIONS", "20"))
+    lookback_hours = int(get_env("PRICE_DEMAND_OBS_LOOKBACK_HOURS", "72"))
 
     while True:
         try:
@@ -261,12 +262,14 @@ def main() -> None:
             inserted = collect_and_store_observations(engine, logger, rollup_minutes=rollup_minutes)
             logger.info("Collected %s observations (rollup=%sm)", inserted, rollup_minutes)
             # 2) Update sensitivity from elasticity where possible
-            update_sensitivity_from_elasticity(engine, logger, min_elasticity_observations=min_elasticity_observations)
-            # 3) (No rule-based fallback) Elasticity-only updates
+            update_sensitivity_from_elasticity(engine, logger,
+                min_elasticity_observations=min_elasticity_observations,
+                lookback_hours=lookback_hours)
         except Exception as e:
             logger.error("Update cycle error: %s", e)
+        
+        # Wait for next cycle
         time.sleep(refresh_seconds)
-
 
 if __name__ == "__main__":
     main()
