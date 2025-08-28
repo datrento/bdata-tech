@@ -113,10 +113,9 @@ services:
 
   # Data API service for collecting market data
   market-data-api:
-    build:
-      context: ./apis
-      dockerfile: Dockerfile
+    image: abiget/market-data-api:0.1
     container_name: market-data-collection-api
+    platform: linux/amd64
     ports:
       - "${DATA_API_PORT}:8000"
     environment:
@@ -141,8 +140,9 @@ services:
 
   # Flink job manager and task manager for processing data
   flink-jobmanager:
-    build: ./flink
+    image: abiget/market-flink:0.1
     container_name: flink-jobmanager
+    platform: linux/amd64
     ports:
       - "8081:8081"  # Flink Web UI
     command: jobmanager
@@ -185,8 +185,9 @@ services:
     networks:
       - common-network
   flink-taskmanager:
-    build: ./flink
+    image: abiget/market-flink:0.1
     container_name: flink-taskmanager
+    platform: linux/amd64
     command: taskmanager
     depends_on:
       - flink-jobmanager
@@ -212,10 +213,9 @@ services:
 
   # Market data Kafka producer
   market-data-producer:
-    build:
-      context: ./kafka
-      dockerfile: Dockerfile
+    image: abiget/market-data-producer:0.1
     container_name: market-data-producer
+    platform: linux/amd64
     depends_on:
       kafka:
         condition: service_healthy
@@ -233,10 +233,9 @@ services:
 
   # User behavior producer
   user-behavior-producer:
-    build:
-      context: ./kafka
-      dockerfile: Dockerfile
+    image: abiget/market-data-producer:0.1
     container_name: user-behavior-producer
+    platform: linux/amd64
     depends_on:
       kafka:
         condition: service_healthy
@@ -253,10 +252,9 @@ services:
       - common-network
   # Dashboard for price intelligence visualization
   dashboard:
-    build:
-      context: ./dashboard
-      dockerfile: Dockerfile
+    image: abiget/price-intelligence-dashboard:0.1
     container_name: price-intelligence-dashboard
+    platform: linux/amd64
     ports:
       - "8501:8501"
     environment:
@@ -280,10 +278,9 @@ services:
 
   # Price sensitivity updater (ml-based elasticity)
   price-sensitivity-updater:
-    build:
-      context: ./ml_services/price_elasticity
-      dockerfile: Dockerfile
+    image: abiget/price-sensitivity-updater:0.2
     container_name: price-sensitivity-updater
+    platform: linux/amd64
     environment:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
