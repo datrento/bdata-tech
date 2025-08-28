@@ -389,6 +389,21 @@ try:
         chip_html += "</div>"
         st.markdown(chip_html, unsafe_allow_html=True)
 
+        # Compact display of active signal rule thresholds
+        try:
+            u_thr = float(os.getenv('UNDERCUT_PERCENT_THRESHOLD', '5'))
+            o_thr = float(os.getenv('OVERPRICED_PERCENT_THRESHOLD', '5'))
+            a_thr = float(os.getenv('PRICE_INCREASE_24HRS_THRESHOLD', '10'))
+            st.caption("Signal rules")
+            rules_html = "<div class='status-row'>"
+            rules_html += f"<span class='status-chip' title='Competitor below our price by at least this gap'>Undercut ≥ {u_thr:.1f}%</span>"
+            rules_html += f"<span class='status-chip' title='Our price below competitor by at least this gap'>Overpriced ≥ {o_thr:.1f}%</span>"
+            rules_html += f"<span class='status-chip' title='Increase from recent minimum within 24h'>Abrupt Increase ≥ {a_thr:.1f}%</span>"
+            rules_html += "</div>"
+            st.markdown(rules_html, unsafe_allow_html=True)
+        except Exception:
+            pass
+
         # Demand & Opportunity (Engagement shifts and opportunity score)
         try:
             behavior = load_user_behavior_summary(days=2)
