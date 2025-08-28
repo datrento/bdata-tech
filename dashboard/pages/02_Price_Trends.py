@@ -78,6 +78,36 @@ def load_trends(days: int = 1):
         df['window_end'] = pd.to_datetime(df['window_end'])
     return df
 
+@st.cache_data(ttl=10)
+def load_price_movements(days: int = 1):
+    engine = get_db_connection()
+    try:
+        query = f"""
+            SELECT 
+                pm.product_sku,
+                pm.competitor_id,
+                ec.name AS competitor_name,
+                pm.previous_price,
+                pm.new_price,
+                pm.pct_change,
+                pm.direction,
+                pm.in_stock,
+                pm.event_time
+            FROM price_movements pm
+            JOIN external_competitors ec ON pm.competitor_id = ec.id
+            WHERE pm.event_time > NOW() - INTERVAL '{days} days'
+            ORDER BY pm.event_time DESC
+        """
+        df = pd.read_sql(query, engine)
+        if not df.empty:
+            df['event_time'] = pd.to_datetime(df['event_time'])
+            # Floor to 5-minute buckets
+            df['bucket_5m'] = df['event_time'].dt.floor('5min')
+        return df
+    except Exception:
+        # Table may not exist yet
+        return pd.DataFrame(columns=['product_sku','competitor_name','previous_price','new_price','pct_change','direction','in_stock','event_time','bucket_5m'])
+
 # --------------------
 # Controls
 # --------------------
@@ -394,3 +424,63 @@ st.download_button(
     file_name=f"price_trends_{days}d.csv",
     mime='text/csv'
 )
+
+# --------------------
+# Raw Price Movements (5-minute buckets)
+# --------------------
+st.subheader("Raw Price Movements (5-minute buckets)")
+movements = load_price_movements(days)
+if movements.empty:
+    st.info("No price movement telemetry available for the selected timeframe.")
+else:
+    # Apply current selections if any
+    mv = movements.copy()
+    if 'selected_products' in locals() and selected_products:
+        mv = mv[mv['product_sku'].isin(selected_products)]
+    if 'selected_competitors' in locals() and selected_competitors:
+        mv = mv[mv['competitor_name'].isin(selected_competitors)]
+
+    if mv.empty:
+        st.info("No movements match the current filters.")
+    else:
+        # Counts per 5-min bucket by direction
+        counts = (
+            mv.groupby(['bucket_5m','direction']).size().reset_index(name='count')
+        )
+        fig_counts = px.bar(
+            counts, x='bucket_5m', y='count', color='direction', barmode='stack',
+            title='Movement Count by 5-minute Bucket', labels={'bucket_5m':'Time Bucket','count':'Movements'}
+        )
+        st.plotly_chart(fig_counts, use_container_width=True)
+
+        # Up vs Down share
+        dir_share = mv['direction'].value_counts().reset_index()
+        dir_share.columns = ['Direction','Count']
+        fig_share = px.pie(dir_share, names='Direction', values='Count', title='Up vs Down Share', hole=0.4)
+        fig_share.update_traces(textposition='inside', textinfo='percent+label')
+        st.plotly_chart(fig_share, use_container_width=True)
+
+        # Histogram of pct_change (absolute)
+        st.markdown("**Distribution of |pct_change|**")
+        mv['abs_pct_change'] = mv['pct_change'].abs()
+        fig_hist = px.histogram(mv, x='abs_pct_change', nbins=30, title='Histogram of Absolute % Change', labels={'abs_pct_change':'Absolute % Change'})
+        st.plotly_chart(fig_hist, use_container_width=True)
+
+        # Recent movements table
+        st.markdown("**Recent Movements**")
+        st.dataframe(
+            mv[['event_time','product_sku','competitor_name','previous_price','new_price','pct_change','direction']]
+              .sort_values('event_time', ascending=False)
+              .head(500),
+            use_container_width=True,
+            column_config={
+                'event_time': st.column_config.DatetimeColumn("Event Time", format="DD/MM/YYYY HH:mm"),
+                'product_sku': st.column_config.TextColumn("Product SKU"),
+                'competitor_name': st.column_config.TextColumn("Competitor"),
+                'previous_price': st.column_config.NumberColumn("Previous Price", format="$%.2f"),
+                'new_price': st.column_config.NumberColumn("New Price", format="$%.2f"),
+                'pct_change': st.column_config.NumberColumn("% Change", format="%.2f%%"),
+                'direction': st.column_config.TextColumn("Direction")
+            },
+            hide_index=True
+        )

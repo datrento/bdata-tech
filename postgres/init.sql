@@ -94,6 +94,22 @@ CREATE TABLE
         UNIQUE (product_sku, competitor_id, signal_type)
     );
 
+-- Price movements table
+CREATE TABLE IF NOT EXISTS price_movements (
+  id BIGSERIAL PRIMARY KEY,
+  product_sku VARCHAR(100) NOT NULL,
+  competitor_id BIGINT NOT NULL,
+  previous_price DECIMAL(10,2) NOT NULL,
+  new_price DECIMAL(10,2) NOT NULL,
+  pct_change DECIMAL(6,2) NOT NULL,
+  direction VARCHAR(8) NOT NULL, -- 'up' | 'down'
+  in_stock BOOLEAN,
+  event_time TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (product_sku) REFERENCES platform_products (sku),
+  FOREIGN KEY (competitor_id) REFERENCES external_competitors (id),
+  UNIQUE (product_sku, competitor_id, event_time)
+);
 
 -- Aggregator data table (data from Kafka)
 CREATE TABLE
@@ -236,7 +252,10 @@ CREATE INDEX idx_user_behavior_events_time ON user_behavior_events (data_timesta
 CREATE INDEX idx_user_behavior_summary_time ON user_behavior_summary (window_start, window_end);
 CREATE INDEX idx_demand_vs_signals_time ON demand_vs_signals (window_start, window_end);
 
+-- add indexes for the price movements table
+CREATE INDEX IF NOT EXISTS idx_price_movements_sku_time ON price_movements (product_sku, event_time DESC);
 -- Ensure CDC provides before images for UPDATE/DELETE
 ALTER TABLE IF EXISTS public.price_signals REPLICA IDENTITY FULL;
 ALTER TABLE IF EXISTS public.platform_products REPLICA IDENTITY FULL;
 ALTER TABLE IF EXISTS public.user_behavior_summary REPLICA IDENTITY FULL;
+ALTER TABLE IF EXISTS public.price_movements REPLICA IDENTITY FULL;
