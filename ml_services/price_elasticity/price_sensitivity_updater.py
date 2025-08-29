@@ -3,9 +3,9 @@ import time
 import logging
 from typing import Dict, List, Optional, Tuple
 import numpy as np
-import httpx
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from datetime import datetime
 
 
 def get_env(name: str, default: str = "") -> str:
@@ -46,60 +46,98 @@ def ensure_tables_exist(engine: Engine):
     )
     with engine.begin() as conn:
         conn.execute(create_sql)
+        # Idempotency for observations per SKU+time
+        conn.execute(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_pdo_sku_obs
+            ON price_demand_observations (sku, observed_at);
+        """))
 
 
-def fetch_user_behavior(api_base: str, sku: str, client: httpx.Client) -> Optional[int]:
-    url = f"{api_base}/user-behavior/data/{sku}"
-    try:
-        # Synchronous wrapper using .get with timeout
-        resp = client.get(url, timeout=10.0)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        ub = data.get("user_behavior", {})
-        purchases = ub.get("purchases")
-        if purchases is None:
-            return None
-        return int(purchases)
-    except Exception:
-        return None
-
-
-def collect_and_store_observations(engine: Engine, api_base: str, logger: logging.Logger) -> None:
-    # Read SKUs and current prices
-    with engine.connect() as conn:
-        skus = conn.execute(text("SELECT sku, current_price FROM platform_products WHERE is_active = TRUE")).all()
-
-    if not skus:
-        return
-
-    with httpx.Client() as client:
-        rows_to_insert: List[Tuple[str, float, int]] = []
-        for row in skus:
-            sku, price = row[0], float(row[1]) if row[1] is not None else None
-            if price is None or price <= 0:
-                continue
-            purchases = fetch_user_behavior(api_base, sku, client)
-            if purchases is None or purchases < 0:
-                continue
-            rows_to_insert.append((sku, price, purchases))
-
-    if not rows_to_insert:
-        return
-
-    # Insert observations
-    insert_sql = text(
+def get_last_observed_map(engine: Engine) -> Dict[str, datetime]:
+    q = text(
         """
-        INSERT INTO price_demand_observations (sku, price, demand)
-        VALUES (:sku, :price, :demand)
+        SELECT sku, MAX(observed_at) AS last_obs
+        FROM price_demand_observations
+        GROUP BY sku
         """
     )
+    with engine.connect() as conn:
+        rows = conn.execute(q).all()
+    return {r[0]: r[1] for r in rows if r[1] is not None}
+
+
+def collect_and_store_observations(engine: Engine, logger: logging.Logger, rollup_minutes: int = 60) -> int:
+    """Aggregate purchases from user_behavior_summary over a recent window and
+    write one observation per SKU using observed_at = latest window_end in the rollup.
+    Returns number of rows inserted.
+    """
+    # Aggregate demand from summary windows in the last N minutes
+    agg_sql = text(
+        """
+        WITH recent AS (
+            SELECT product_sku, window_end, purchases
+            FROM user_behavior_summary
+            WHERE window_end > NOW() - ((:m || ' minutes')::interval)
+        ),
+        rollup AS (
+            SELECT product_sku,
+                   MAX(window_end) AS observed_at,
+                   SUM(COALESCE(purchases, 0))::BIGINT AS demand
+            FROM recent
+            GROUP BY product_sku
+        )
+        SELECT ru.product_sku,
+               ru.observed_at,
+               ru.demand,
+               COALESCE(h.adjusted_price, pp.current_price) AS price_at_obs
+        FROM rollup ru
+        JOIN platform_products pp ON pp.sku = ru.product_sku AND pp.is_active = TRUE
+        LEFT JOIN LATERAL (
+            SELECT adjusted_price
+            FROM platform_product_price_history h
+            WHERE h.sku = ru.product_sku
+              AND h.change_timestamp <= ru.observed_at
+            ORDER BY h.change_timestamp DESC
+            LIMIT 1
+        ) h ON TRUE
+        """
+    )
+
+    with engine.connect() as conn:
+        rows = conn.execute(agg_sql, {"m": str(rollup_minutes)}).all()
+
+    if not rows:
+        return 0
+
+    last_obs = get_last_observed_map(engine)
+
+    insert_sql = text(
+        """
+        INSERT INTO price_demand_observations (sku, observed_at, price, demand)
+        VALUES (:sku, :observed_at, :price, :demand)
+        ON CONFLICT DO NOTHING
+        """
+    )
+
+    inserted = 0
     with engine.begin() as conn:
-        for sku, price, demand in rows_to_insert:
+        for sku, observed_at, demand, price in rows:
+            if price is None or float(price) <= 0:
+                continue
+            prev = last_obs.get(sku)
+            if prev is not None and observed_at is not None and observed_at <= prev:
+                continue
             try:
-                conn.execute(insert_sql, {"sku": sku, "price": price, "demand": int(demand)})
+                conn.execute(insert_sql, {
+                    "sku": sku,
+                    "observed_at": observed_at,
+                    "price": float(price),
+                    "demand": int(demand)
+                })
+                inserted += 1
             except Exception as e:
                 logger.error("Failed to insert observation for %s: %s", sku, e)
+    return inserted
 
 
 def compute_elasticity(engine: Engine, sku: str, lookback_hours: int = 72, min_elasticity_observations: int = 5) -> Tuple[Optional[float], int]:
@@ -136,22 +174,25 @@ def compute_elasticity(engine: Engine, sku: str, lookback_hours: int = 72, min_e
     return float(b), obs_count
 
 
-def update_sensitivity_from_elasticity(engine: Engine, logger: logging.Logger, min_elasticity_observations: int = 5) -> None:
+def update_sensitivity_from_elasticity(engine: Engine, logger: logging.Logger, min_elasticity_observations: int = 5, lookback_hours: int = 72) -> None:
     # Get all SKUs
     with engine.connect() as conn:
         skus = [r[0] for r in conn.execute(text("SELECT sku FROM platform_products WHERE is_active = TRUE")).all()]
     if not skus:
         return
 
+    high_thr = float(get_env("ELASTICITY_HIGH_THRESHOLD", "-1.0"))
+    med_thr = float(get_env("ELASTICITY_MEDIUM_THRESHOLD", "-0.3"))
+
     updates: List[Tuple[str, str, float, int]] = []
     for sku in skus:
-        e, n_obs = compute_elasticity(engine, sku, min_elasticity_observations=min_elasticity_observations)
+        e, n_obs = compute_elasticity(engine, sku, min_elasticity_observations=min_elasticity_observations, lookback_hours=lookback_hours)
         if e is None:
             continue
         # More negative elasticity => more sensitive
-        if e <= -1.0:
+        if e <= high_thr:
             sens = 'high'
-        elif e <= -0.3:
+        elif e <= med_thr:
             sens = 'medium'
         else:
             sens = 'low'
@@ -172,6 +213,13 @@ def update_sensitivity_from_elasticity(engine: Engine, logger: logging.Logger, m
             WHERE sku = :sku
             """
         )
+        insert_hist = text(
+            """
+            INSERT INTO price_sensitivity_history
+                (sku, price_elasticity, price_sensitivity, observations, updated_at)
+            VALUES (:sku, :elasticity, :sens, :n_obs, CURRENT_TIMESTAMP)
+            """
+        )
         for sku, sens, elasticity, n_obs in updates:
             try:
                 conn.execute(sql, {
@@ -179,6 +227,12 @@ def update_sensitivity_from_elasticity(engine: Engine, logger: logging.Logger, m
                     "elasticity": elasticity,
                     "n_obs": n_obs,
                     "sku": sku,
+                })
+                conn.execute(insert_hist, {
+                    "sku": sku,
+                    "elasticity": elasticity,
+                    "sens": sens,
+                    "n_obs": n_obs
                 })
             except Exception as e:
                 logger.error("Failed to update sensitivity for %s: %s", sku, e)
@@ -198,20 +252,24 @@ def main() -> None:
 
     engine = create_db_engine()
     ensure_tables_exist(engine)
-    api_base = get_env("DATA_API_INTERNAL_URL", "http://market-data-collection-api:8000/api")
-    min_elasticity_observations = int(get_env("MIN_ELASTICITY_OBSERVATIONS", "5"))
+    rollup_minutes = int(get_env("ELASTICITY_ROLLUP_MINUTES", "60"))
+    min_elasticity_observations = int(get_env("MIN_ELASTICITY_OBSERVATIONS", "20"))
+    lookback_hours = int(get_env("PRICE_DEMAND_OBS_LOOKBACK_HOURS", "72"))
 
     while True:
         try:
-            # 1) Collect one observation per product (current price, purchases)
-            collect_and_store_observations(engine, api_base, logger)
+            # 1) Collect observations per SKU from DB rollup windows
+            inserted = collect_and_store_observations(engine, logger, rollup_minutes=rollup_minutes)
+            logger.info("Collected %s observations (rollup=%sm)", inserted, rollup_minutes)
             # 2) Update sensitivity from elasticity where possible
-            update_sensitivity_from_elasticity(engine, logger, min_elasticity_observations=min_elasticity_observations)
-            # 3) (No rule-based fallback) Elasticity-only updates
+            update_sensitivity_from_elasticity(engine, logger,
+                min_elasticity_observations=min_elasticity_observations,
+                lookback_hours=lookback_hours)
         except Exception as e:
             logger.error("Update cycle error: %s", e)
+        
+        # Wait for next cycle
         time.sleep(refresh_seconds)
-
 
 if __name__ == "__main__":
     main()

@@ -2,8 +2,10 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from db import get_db_connection
 from streamlit_autorefresh import st_autorefresh
+import os
 
 # Set page configuration
 st.set_page_config(
@@ -64,8 +66,11 @@ col1, col2, col3 = st.columns([1, 2, 1])
 with col1:
     days = st.slider("Data timeframe (days)", 1, 90, 7, 
                    help="Choose how many days of historical data to display")
-with col3:
-    if st.button("Refresh Data", key="refresh_btn", use_container_width=True):
+
+# Align refresh with other pages
+r1, r2, r3 = st.columns([1, 2, 1])
+with r3:
+    if st.button("Refresh Data", key="competitor_refresh_btn", use_container_width=True):
         st.cache_data.clear()
 
 # Load data
@@ -74,6 +79,13 @@ df = load_competitor_data(days)
 if df.empty:
     st.info("No competitor data available for the selected timeframe.")
     st.stop()
+
+# Filters
+# Category filter to scope the whole page
+categories = sorted(df['category'].dropna().unique().tolist()) if not df.empty else []
+sel_categories = st.multiselect("Categories", options=categories, default=categories)
+if sel_categories:
+    df = df[df['category'].isin(sel_categories)]
 
 # Competitor multi-selection
 competitors = sorted(df['competitor_name'].unique())
@@ -92,21 +104,36 @@ st.header("Competitor Analysis")
 # Create competitor comparison KPIs
 st.subheader("Key Performance Indicators")
 
+# Rules caption (env-driven thresholds)
+try:
+    undercut_thr = float(os.getenv('UNDERCUT_PERCENT_THRESHOLD', '5'))
+    st.caption(f"Rule: Undercut counted when competitor gap ≤ -{undercut_thr:.1f}% vs our price")
+except Exception:
+    undercut_thr = 5.0
+
 # Calculate KPIs for each competitor
 kpi_data = []
 for comp in selected_competitors:
-    comp_df = df[df['competitor_name'] == comp].copy()
+    comp_df = competitor_df[competitor_df['competitor_name'] == comp].copy()
+    total_rows = len(comp_df)
     products_count = comp_df['product_sku'].nunique()
-    avg_price_diff = comp_df['price_diff_percent'].mean()
-    undercut_count = len(comp_df[comp_df['price_diff_percent'] < -5])
-    undercut_percent = (undercut_count / len(comp_df)) * 100 if len(comp_df) > 0 else 0
-    
+    avg_gap_pct = comp_df['price_diff_percent'].mean()
+    cheaper_share = (comp_df['price_diff_percent'] < 0).mean() * 100 if total_rows else 0
+    pricier_share = (comp_df['price_diff_percent'] > 0).mean() * 100 if total_rows else 0
+    undercut_rows = comp_df[comp_df['price_diff_percent'] <= -undercut_thr]
+    undercut_count = len(undercut_rows)
+    undercut_percent = (undercut_count / total_rows * 100) if total_rows else 0
+    avg_undercut_gap_abs = undercut_rows['price_diff_percent'].abs().mean() if not undercut_rows.empty else 0
+    aggression = (undercut_count / max(1, total_rows)) * (avg_undercut_gap_abs if avg_undercut_gap_abs else 0)
+
     kpi_data.append({
         "Competitor": competitor_names[comp],
         "Products Tracked": products_count,
-        "Avg Price Difference": f"{avg_price_diff:.2f}%",
-        "Number of Undercuts (5%)": undercut_count,
-        "Undercut Percentage": f"{undercut_percent:.2f}%"
+        "Avg Gap % vs Us": f"{avg_gap_pct:.2f}%",
+        f"Undercuts (≥{undercut_thr:.1f}%)": undercut_count,
+        "Undercut %": f"{undercut_percent:.2f}%",
+        "Cheaper / Pricier %": f"{cheaper_share:.1f}% / {pricier_share:.1f}%",
+        "Aggression Score": f"{aggression:.3f}"
     })
 
 # Display KPIs as a table for comparison
@@ -118,9 +145,11 @@ st.dataframe(
     column_config={
         "Competitor": st.column_config.TextColumn("Competitor"),
         "Products Tracked": st.column_config.NumberColumn("Products Tracked"),
-        "Avg Price Difference": st.column_config.TextColumn("Avg Price Difference"),
-        "Number of Undercuts (5%)": st.column_config.NumberColumn("Undercuts (>5%)"),
-        "Undercut Percentage": st.column_config.TextColumn("Undercut %")
+        "Avg Gap % vs Us": st.column_config.TextColumn("Avg Gap % vs Us"),
+        f"Undercuts (≥{undercut_thr:.1f}%)": st.column_config.NumberColumn(f"Undercuts (≥{undercut_thr:.1f}%)"),
+        "Undercut %": st.column_config.TextColumn("Undercut %"),
+        "Cheaper / Pricier %": st.column_config.TextColumn("Cheaper / Pricier %"),
+        "Aggression Score": st.column_config.TextColumn("Aggression Score")
     }
 )
 
@@ -128,16 +157,21 @@ st.dataframe(
 st.subheader("Price Comparison by Category")
 st.markdown("This chart shows how competitors' prices compare to ours across different product categories.")
 
-# Group by category and competitor
-category_comp_df = df.groupby(['category', 'competitor_name']).agg(
+# Group by category and competitor (respect filters)
+category_comp_df = competitor_df.groupby(['category', 'competitor_name']).agg(
     competitor_avg_price=('competitor_price', 'mean'),
-    our_avg_price=('our_price', 'mean'),
     price_diff_percent=('price_diff_percent', 'mean'),
     product_count=('product_sku', 'nunique')
 ).reset_index()
 
-# Filter for selected competitors
-category_comp_df = category_comp_df[category_comp_df['competitor_name'].isin(selected_competitors)]
+# Our average price per category without duplicating per competitor
+our_prices = (
+    competitor_df[['category','product_sku','our_price']]
+        .drop_duplicates()
+        .groupby('category')['our_price']
+        .mean()
+        .reset_index()
+)
 
 # Create multi-line chart for price comparison
 fig = px.line(
@@ -155,17 +189,16 @@ fig = px.line(
 )
 
 # Add our prices as a reference line
-our_prices = df.groupby('category')['our_price'].mean().reset_index()
 fig.add_trace(
-    px.line(
-        our_prices,
-        x='category',
-        y='our_price',
-        line_dash_sequence=['dash'],
-        color_discrete_sequence=['#0068C9']
-    ).data[0]
+    go.Scatter(
+        x=our_prices['category'],
+        y=our_prices['our_price'],
+        mode='lines',
+        name='Our Prices',
+        line=dict(color='#0068C9', dash='dash'),
+        showlegend=True
+    )
 )
-fig.data[-1].name = 'Our Prices'
 
 fig.update_layout(
     legend_title_text='Competitor',
@@ -178,9 +211,7 @@ st.plotly_chart(fig, use_container_width=True)
 if st.checkbox("Show as Bar Chart"):
     # Create a grouped bar chart as an alternative view
     # Add our prices to the dataframe
-    category_our_df = df.groupby('category').agg(
-        our_avg_price=('our_price', 'mean')
-    ).reset_index()
+    category_our_df = our_prices.rename(columns={'our_price': 'our_avg_price'})
     category_our_df['competitor_name'] = 'Our Prices'
     category_our_df['competitor_avg_price'] = category_our_df['our_avg_price']
     
@@ -215,7 +246,7 @@ comp_tabs = st.tabs(selected_competitors)
 
 for i, comp in enumerate(selected_competitors):
     with comp_tabs[i]:
-        comp_df = df[df['competitor_name'] == comp].copy()
+        comp_df = competitor_df[competitor_df['competitor_name'] == comp].copy()
         comp_name = competitor_names[comp]
         
         col1, col2 = st.columns([3, 1])
@@ -259,11 +290,11 @@ st.markdown("These are the products where competitors' prices are significantly 
 
 # Show undercut products for all selected competitors
 for comp in selected_competitors:
-    comp_df = df[df['competitor_name'] == comp].copy()
+    comp_df = competitor_df[competitor_df['competitor_name'] == comp].copy()
     comp_name = competitor_names[comp]
     
     with st.expander(f"{comp_name} - Top Undercut Products"):
-        undercut_df = comp_df[comp_df['price_diff_percent'] < -5].sort_values('price_diff_percent')
+        undercut_df = comp_df[comp_df['price_diff_percent'] <= -undercut_thr].sort_values('price_diff_percent')
         if not undercut_df.empty:
             undercut_df = undercut_df.drop_duplicates(subset=['product_sku'], keep='first')
             
@@ -286,8 +317,8 @@ st.subheader("Price History Comparison")
 st.markdown("Compare price trends for specific products across the selected competitors.")
 
 # Get all products that have prices from the selected competitors
-all_products = df[df['competitor_name'].isin(selected_competitors)]['product_sku'].unique()
-product_names = {sku: name for sku, name in zip(df['product_sku'], df['product_name'])}
+all_products = competitor_df[competitor_df['competitor_name'].isin(selected_competitors)]['product_sku'].unique()
+product_names = {sku: name for sku, name in zip(competitor_df['product_sku'], competitor_df['product_name'])}
 
 # Create selectable options with product name
 product_options = [f"{sku} - {product_names.get(sku, sku)}" for sku in all_products]
@@ -304,7 +335,7 @@ if selected_product_options:
     selected_products = [option.split(" - ")[0] for option in selected_product_options]
     
     # Filter data for selected products and competitors
-    product_df = df[
+    product_df = competitor_df[
         (df['product_sku'].isin(selected_products)) & 
         (df['competitor_name'].isin(selected_competitors))
     ].copy()
@@ -332,7 +363,7 @@ if selected_product_options:
     
     # Add our prices as reference lines
     for product in selected_products:
-        our_df = df[df['product_sku'] == product].copy()
+        our_df = competitor_df[competitor_df['product_sku'] == product].copy()
         if not our_df.empty:
             product_name = our_df['product_name'].iloc[0]
             our_price = our_df['our_price'].iloc[0]  # Using the first occurrence
@@ -368,3 +399,16 @@ if selected_product_options:
         )
 else:
     st.info("Please select at least one product to view price history.")
+
+# Download CSV for current filtered competitor dataset
+with st.expander("Download current view as CSV"):
+    try:
+        csv_df = competitor_df.copy()
+        st.download_button(
+            label="Download CSV",
+            data=csv_df.to_csv(index=False).encode('utf-8'),
+            file_name=f"competitor_analysis_{days}d.csv",
+            mime='text/csv'
+        )
+    except Exception:
+        pass

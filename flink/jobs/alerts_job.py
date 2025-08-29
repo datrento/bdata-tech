@@ -123,6 +123,29 @@ class AlertsJob(BaseJob):
             )
         """)
 
+        # Price movements table# Price movements table
+        self.t_env.execute_sql(f"""
+            CREATE TABLE price_movements (
+            product_sku STRING,
+            competitor_id BIGINT,
+            previous_price DECIMAL(10,2),
+            new_price DECIMAL(10,2),
+            pct_change DECIMAL(6,2),
+            direction STRING,
+            in_stock BOOLEAN,
+            event_time TIMESTAMP(3),
+            PRIMARY KEY (product_sku, competitor_id, event_time) NOT ENFORCED
+            ) WITH (
+            'connector'='jdbc',
+            'url'='{self.postgres_url}',
+            'table-name'='price_movements',
+            'username'='{self.postgres_user}',
+            'password'='{self.postgres_password}',
+            'sink.buffer-flush.max-rows'='1',
+            'sink.buffer-flush.interval'='1s'
+            )
+        """)
+
     def build_undercut_query(self):
         return f"""
             INSERT INTO price_signals
@@ -322,44 +345,33 @@ class AlertsJob(BaseJob):
 
     def build_sequential_change_query(self):
         return f"""
-            INSERT INTO price_signals
-            WITH price_changes AS (
-                SELECT 
-                    product_sku,
-                    competitor_name,
-                    price,
-                    in_stock,
-                    event_time,
-                    LAG(price, 1) OVER (
-                        PARTITION BY product_sku, competitor_name
-                        ORDER BY event_time
-                    ) as previous_price
+            INSERT INTO price_movements
+                SELECT
+                    pc.product_sku,
+                    ec.id AS competitor_id,
+                    pc.previous_price,
+                    pc.price AS new_price,
+                    CAST(((pc.price - pc.previous_price) / NULLIF(pc.previous_price,0) * 100) AS DECIMAL(6,2)) AS pct_change,
+                    CASE 
+                        WHEN pc.price > pc.previous_price THEN 'up' 
+                        WHEN pc.price < pc.previous_price THEN 'down' 
+                        ELSE 'no change'     
+                    END AS direction,
+                    pc.in_stock,
+                    CAST(pc.event_time AS TIMESTAMP(3)) AS event_time
+                FROM (
+                    SELECT
+                        product_sku, competitor_name, price, in_stock, event_time,
+                            LAG(price) OVER (PARTITION BY product_sku, competitor_name ORDER BY event_time) AS previous_price
                 FROM competitor_prices
-            )
-            SELECT 
-                pc.product_sku,
-                ec.id AS competitor_id,
-                CAST('SEQUENTIAL_CHANGE' AS STRING) AS signal_type,
-                pp.current_price AS platform_price,
-                pc.price AS competitor_price,
-                CAST(((pc.price - pc.previous_price) / NULLIF(pc.previous_price, 0) * 100) AS DECIMAL(5,2)) AS percentage_diff,
-                CASE 
-                    WHEN pc.price < pc.previous_price THEN 'Competitor price decreased'
-                    ELSE 'Competitor price increased'
-                END AS recommendation,
-                CAST(CASE 
-                    WHEN ABS((pc.price - pc.previous_price) / NULLIF(pc.previous_price, 0) * 100) >= {self.sequential_change_threshold} THEN 2
-                    ELSE 3
-                END AS SMALLINT) AS priority,
-                pc.in_stock,
-                CAST(pc.event_time AS TIMESTAMP(3)) AS signal_timestamp,
-                true AS is_active
-            FROM price_changes pc
-            JOIN external_competitors_dim AS ec ON LOWER(pc.competitor_name) = ec.code
-            JOIN platform_products_dim AS pp ON pc.product_sku = pp.sku
+            ) pc
+            JOIN external_competitors_dim ec ON LOWER(pc.competitor_name)= ec.code
+            JOIN platform_products_dim pp ON pc.product_sku = pp.sku
             WHERE pc.previous_price IS NOT NULL
-              AND ABS((pc.price - pc.previous_price) / NULLIF(pc.previous_price, 0) * 100) >= {self.sequential_change_threshold}
-              AND pp.is_active = TRUE
+            AND ABS((pc.price - pc.previous_price) / NULLIF(pc.previous_price,0) * 100) >= {self.sequential_change_threshold}
+            AND pp.is_active = TRUE
+            AND pc.in_stock = TRUE
+            AND pp.in_stock = TRUE
         """
 
     def run(self):
