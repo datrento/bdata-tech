@@ -49,6 +49,18 @@ bash run.sh start
 - Stop and remove containers/volumes: `bash run.sh stop`
 - Rebuild images: `bash run.sh build && bash run.sh start`
 
+After services are up, submit the Flink jobs:
+
+```bash
+bash run_flink_jobs.sh
+```
+
+Optional: check job status in the Flink UI (http://localhost:8081) or via CLI:
+
+```bash
+docker exec flink-jobmanager /opt/flink/bin/flink list | cat
+```
+
 ### URLs (defaults)
 
 - Dashboard (Streamlit): `http://localhost:8501`
