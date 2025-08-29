@@ -31,17 +31,17 @@ CREATE TABLE
     );
 
 -- Universal product mapping table
-CREATE TABLE
-    IF NOT EXISTS product_mapping (
-        id BIGSERIAL PRIMARY KEY,
-        product_id BIGINT NOT NULL,
-        amazon_asin VARCHAR(100) NOT NULL,
-        ebay_item_id VARCHAR(100) NOT NULL,
-        bestbuy_sku VARCHAR(100) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (product_id) REFERENCES platform_products (id)
-    );
+-- CREATE TABLE
+--     IF NOT EXISTS product_mapping (
+--         id BIGSERIAL PRIMARY KEY,
+--         product_id BIGINT NOT NULL,
+--         amazon_asin VARCHAR(100) NOT NULL,
+--         ebay_item_id VARCHAR(100) NOT NULL,
+--         bestbuy_sku VARCHAR(100) NOT NULL,
+--         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+--         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+--         FOREIGN KEY (product_id) REFERENCES platform_products (id)
+--     );
 
 -- Competitor price history table (data from Kafka)
 CREATE TABLE
@@ -328,12 +328,11 @@ CREATE INDEX IF NOT EXISTS idx_price_adjustments_sku_status ON price_adjustments
 CREATE INDEX IF NOT EXISTS idx_price_adjustments_created_at ON price_adjustments (created_at DESC);
 
 -- Ensure CDC provides before images if needed later
-ALTER TABLE IF NOT EXISTS public.price_adjustments REPLICA IDENTITY FULL;
-ALTER TABLE IF NOT EXISTS public.price_adjustment_runs REPLICA IDENTITY FULL;
+ALTER TABLE IF EXISTS public.price_adjustments REPLICA IDENTITY FULL;
+ALTER TABLE IF EXISTS public.price_adjustment_runs REPLICA IDENTITY FULL;
 
 
 ALTER TABLE IF EXISTS public.platform_product_price_history
-  ADD COLUMN proposal_id BIGINT NULL REFERENCES price_adjustments(id);
+  ADD COLUMN IF NOT EXISTS proposal_id BIGINT NULL REFERENCES price_adjustments(id);
 
-CREATE INDEX IF NOT EXISTS idx_ppph_sku_time
-  ON platform_product_price_history (sku, change_timestamp DESC);
+-- idx_ppph_sku_time is created earlier; avoid duplicate definition

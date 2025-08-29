@@ -10,7 +10,7 @@ from sqlalchemy import text, true
 from config import get_engine
 
 
-def fetch_candidates(auto_apply_pending: bool=True, limit: int=200) -> pd.DataFrame:
+def fetch_candidates(auto_apply_pending: bool, limit: int=200) -> pd.DataFrame:
     engine = get_engine()
     if auto_apply_pending:
         q = text(

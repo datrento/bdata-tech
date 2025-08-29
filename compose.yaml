@@ -313,9 +313,10 @@ services:
 
   # Price adjustment service
   price-adjustment:
-    build:
-      context: ./ml_services/price_adjustment
-      dockerfile: Dockerfile
+    # build:
+    #   context: ./ml_services/price_adjustment
+    #   dockerfile: Dockerfile
+    image: abiget/price-adjuster:0.1
     container_name: price-adjustment
     platform: linux/amd64
     environment:

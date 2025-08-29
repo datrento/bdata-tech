@@ -119,6 +119,7 @@ def forecast_competitor_price(
 
     # make a prediction for the last price
     last = series.iloc[[-1]].copy()
+    last_val = float(series["avg_price"].iloc[-1])
     for lag in range(1, max_lag + 1):
         last[f"lag_{lag}"] = series["avg_price"].iloc[-lag]
     last["price_volatility"] = series["price_volatility"].iloc[-1]
