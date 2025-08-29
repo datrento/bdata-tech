@@ -10,6 +10,12 @@ End‑to‑end pricing system: collects competitor data, detects signals, estima
 
 ![System Data Model](images/system-data-model.png)
 
+### Requirements
+
+- Docker
+- Docker Compose
+- Bash shell
+
 ### Components
 
 - Kafka + Producers (`kafka/`): Ingest competitor prices and synthetic user behavior.
