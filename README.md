@@ -1,4 +1,4 @@
-## Price Intelligence Platform
+## Automated E-commerce Price Intelligence
 
 End‑to‑end pricing system: collects competitor data, detects signals, estimates elasticity, proposes price changes, and applies approved changes with an auditable history.
 
