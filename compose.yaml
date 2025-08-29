@@ -1,4 +1,5 @@
 services:
+  # Kafka broker using KRaft mode
   kafka:
     image: apache/kafka:3.8.0  # Pin specific version instead of latest
     container_name: kafka-broker
@@ -40,6 +41,7 @@ services:
       retries: 15
       start_period: 30s
 
+  # Kafka UI for managing and monitoring Kafka
   kafka-ui:
     image: kafbat/kafka-ui:main
     container_name: kafka-ui
@@ -61,7 +63,7 @@ services:
       retries: 3
       start_period: 30s
 
-
+  # PostgreSQL database for storing data
   postgres:
     image: postgres
     container_name: postgres-db
@@ -77,6 +79,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_HOST_AUTH_METHOD: trust # Allow connections without password for local development
       POSTGRES_PORT: 5432  # Specify the port for PostgreSQL
+      TZ: Europe/Rome
     volumes:
       - type: tmpfs
         target: /dev/shm
@@ -85,6 +88,8 @@ services:
 
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql # Initialize database with SQL script and postgres will run it
+      - ./postgres/init-cdc.sh:/docker-entrypoint-initdb.d/init-cdc.sh # CDC configuration script
+      - ./postgres/seed.sql:/docker-entrypoint-initdb.d/seed.sql # Seed data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: 5s
@@ -93,6 +98,7 @@ services:
     networks:
       - common-network
 
+  # Adminer for database management
   adminer:
     image: adminer
     container_name: adminer
@@ -105,8 +111,209 @@ services:
     networks:
       - common-network
 
+  # Data API service for collecting market data
+  market-data-api:
+    image: abiget/market-data-api:0.1
+    container_name: market-data-collection-api
+    platform: linux/amd64
+    ports:
+      - "${DATA_API_PORT}:8000"
+    environment:
+      TZ: Europe/Rome
+    depends_on:
+      # Only depends on itself to start after infrastructure is ready
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - common-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "${DATA_API_URL}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    volumes:
+      - ./apis:/app  # For development - live reload
+
+
+  # Flink job manager and task manager for processing data
+  flink-jobmanager:
+    image: abiget/market-flink:0.1
+    container_name: flink-jobmanager
+    platform: linux/amd64
+    ports:
+      - "8081:8081"  # Flink Web UI
+    command: jobmanager
+    # standalone-job --python /opt/flink/processing/src/jobs/price_analyzer.py
+    depends_on:
+      - kafka
+      - postgres
+      - market-data-producer
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+
+        jobmanager.memory.process.size: 1800m
+        jobmanager.memory.jvm-overhead.min: 192m
+
+        state.backend: filesystem
+        state.checkpoints.dir: file:///tmp/flink-checkpoints
+        heartbeat.interval: 1000
+        heartbeat.timeout: 5000
+        rest.flamegraph.enabled: true
+        web.backpressure.refresh-interval: 10000
+        execution.shutdown-on-application-finish: false
+      - FLINK_LOCAL_TIME_ZONE=Europe/Rome
+      - TZ=Europe/Rome
+      - ALERTS_KAFKA_STARTUP_MODE=latest-offset
+      - UNDERCUT_PERCENT_THRESHOLD=${UNDERCUT_PERCENT_THRESHOLD}
+      - OVERPRICED_PERCENT_THRESHOLD=${OVERPRICED_PERCENT_THRESHOLD}
+      - PRICE_INCREASE_24HRS_THRESHOLD=${PRICE_INCREASE_24HRS_THRESHOLD}
+      - SEQUENTIAL_CHANGE_THRESHOLD=${SEQUENTIAL_CHANGE_THRESHOLD}
+      - KAFKA_TOPIC=${COMPETITOR_PRICES}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/overview"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    volumes:
+      - ./flink:/opt/flink/app
+      - flink_data:/tmp/
+    networks:
+      - common-network
+  flink-taskmanager:
+    image: abiget/market-flink:0.1
+    container_name: flink-taskmanager
+    platform: linux/amd64
+    command: taskmanager
+    depends_on:
+      - flink-jobmanager
+      - kafka
+      - postgres
+      - market-data-producer
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.memory.process.size: 3072m
+        taskmanager.numberOfTaskSlots: 8
+        state.backend: filesystem
+        state.checkpoints.dir: file:///tmp/flink-checkpoints
+        heartbeat.interval: 1000
+        heartbeat.timeout: 5000
+      - FLINK_LOCAL_TIME_ZONE=Europe/Rome
+      - TZ=Europe/Rome
+    volumes:
+      - flink_data:/tmp/
+    networks:
+      - common-network
+
+  # Market data Kafka producer
+  market-data-producer:
+    image: abiget/market-data-producer:0.1
+    container_name: market-data-producer
+    platform: linux/amd64
+    depends_on:
+      kafka:
+        condition: service_healthy
+      market-data-api:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVER=${KAFKA_BOOTSTRAP_SERVER}
+      - DATA_API_INTERNAL_URL=${DATA_API_INTERNAL_URL}
+      - COLLECTION_INTERVAL=${COLLECTION_INTERVAL}
+    command: ["python", "producers/market_data_producer.py"]
+    volumes:
+      - ./kafka:/kafka  # live-reload code for development
+    networks:
+      - common-network
+
+  # User behavior producer
+  user-behavior-producer:
+    image: abiget/market-data-producer:0.1
+    container_name: user-behavior-producer
+    platform: linux/amd64
+    depends_on:
+      kafka:
+        condition: service_healthy
+      market-data-api:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVER=${KAFKA_BOOTSTRAP_SERVER}
+      - DATA_API_INTERNAL_URL=${DATA_API_INTERNAL_URL}
+      - USER_BEHAVIOR_INTERVAL=${USER_BEHAVIOR_INTERVAL}
+    command: ["python", "producers/user_behavior_producer.py"]
+    volumes:
+      - ./kafka:/kafka
+    networks:
+      - common-network
+  # Dashboard for price intelligence visualization
+  dashboard:
+    image: abiget/price-intelligence-dashboard:0.1
+    container_name: price-intelligence-dashboard
+    platform: linux/amd64
+    ports:
+      - "8501:8501"
+    environment:
+      - POSTGRES_URL=${POSTGRES_URL}
+      - ALERT_PERCENT_THRESHOLD=${ALERT_PERCENT_THRESHOLD}
+      - UNDERCUT_PERCENT_THRESHOLD=${UNDERCUT_PERCENT_THRESHOLD}
+      - OVERPRICED_PERCENT_THRESHOLD=${OVERPRICED_PERCENT_THRESHOLD}
+      - PRICE_INCREASE_24HRS_THRESHOLD=${PRICE_INCREASE_24HRS_THRESHOLD}
+      - SEQUENTIAL_CHANGE_THRESHOLD=${SEQUENTIAL_CHANGE_THRESHOLD}
+    depends_on:
+      - postgres
+    volumes:
+      - ./dashboard:/app
+    networks:
+      - common-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Price sensitivity updater (ml-based elasticity)
+  price-sensitivity-updater:
+    image: abiget/price-sensitivity-updater:0.2
+    container_name: price-sensitivity-updater
+    platform: linux/amd64
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - PRICE_SENSITIVITY_REFRESH_SEC=${PRICE_SENSITIVITY_REFRESH_SEC}
+      - DATA_API_INTERNAL_URL=${DATA_API_INTERNAL_URL}
+      - MIN_ELASTICITY_OBSERVATIONS=${MIN_ELASTICITY_OBSERVATIONS}
+      - PRICE_DEMAND_OBS_LOOKBACK_HOURS=${PRICE_DEMAND_OBS_LOOKBACK_HOURS}
+      - ELASTICITY_ROLLUP_MINUTES=${ELASTICITY_ROLLUP_MINUTES}
+      - ELASTICITY_HIGH_THRESHOLD=${ELASTICITY_HIGH_THRESHOLD}
+      - ELASTICITY_MEDIUM_THRESHOLD=${ELASTICITY_MEDIUM_THRESHOLD}
+    depends_on:
+      kafka:
+        condition: service_healthy
+      market-data-api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      flink-jobmanager:
+        condition: service_healthy
+    command: ["python", "price_sensitivity_updater.py"]
+    volumes:
+      - ./ml_services/price_elasticity:/price_elasticity
+    networks:
+      - common-network
+
 volumes:
   kafka-data:
   postgres_data:
+  flink_data:
 networks:
   common-network:

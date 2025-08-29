@@ -30,21 +30,17 @@ if [ ! -f .env ]; then
   cp .env.example .env || error "Could not create .env file"
 fi
 
-# Ensure requirements.txt is in dashboard directory
-# if [ ! -f dashboard/requirements.txt ] && [ -f requirements.txt ]; then
-#   echo "Copying requirements.txt to dashboard directory..."
-#   cp requirements.txt dashboard/ || error "Could not copy requirements.txt"
-# fi
-
 # Parse command
 case "$1" in
   start|up)
     echo "Starting services..."
     $compose up -d --remove-orphans
     echo -e "${GREEN}Services started!${NC}"
-    # echo "Dashboard: http://$(grep STREAMLIT_HOST .env | cut -d= -f2):$(grep STREAMLIT_PORT .env | cut -d= -f2)"
-    echo "Kafka UI: http://$(grep KAFKA_UI_HOST .env | cut -d= -f2):$(grep KAFKA_UI_PORT .env | cut -d= -f2)"
-    echo "Adminer UI: http://$(grep ADMINER_HOST .env | cut -d= -f2):$(grep ADMINER_PORT .env | cut -d= -f2)"
+    echo "Dashboard: $(grep DASHBOARD_URL .env | cut -d= -f2)"
+    echo "Kafka UI: $(grep KAFKA_UI_URL .env | cut -d= -f2)"
+    echo "Adminer UI: $(grep ADMINER_URL .env | cut -d= -f2)"
+    echo "Data API: $(grep DATA_API_URL .env | cut -d= -f2)/docs"
+    echo "Flink UI: $(grep FLINK_UI_URL .env | cut -d= -f2)"
     ;;
   stop|down)
     echo "Stopping services..."
