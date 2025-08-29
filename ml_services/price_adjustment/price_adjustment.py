@@ -11,8 +11,8 @@ from sqlalchemy import text
 
 from dask import delayed, compute
 from dask.distributed import Client, LocalCluster
-from .config import get_engine
-from .price_forecast import forecast_competitor_price
+from config import get_engine
+from price_forecast import forecast_competitor_price
 
 # -------------------------
 # Config
@@ -228,14 +228,13 @@ def create_run(engine, cfg: Config, candidates_count: int) -> int:
             text(
                 """
                 INSERT INTO price_adjustment_runs (parameters, candidates_count, proposed_count, created_by)
-                VALUES (:params::jsonb, :candidates, 0, :by)
+                VALUES (CAST(:params AS JSONB), :candidates, 0, :by)
                 RETURNING id
                 """
             ),
             {
                 "params": json.dumps({
                     "price_grid_pct": cfg.price_grid_pct,
-                    "min_margin_pct": cfg.min_margin_pct,
                 }),
                 "candidates": candidates_count,
                 "by": cfg.run_created_by,
@@ -273,7 +272,7 @@ def insert_proposals(engine, run_id: int, proposals: List[Dict[str, Any]], creat
                 ) VALUES (
                     :sku, :old_price, :proposed_price, :elasticity_used,
                     :expected_demand_delta, :expected_profit_delta,
-                    :competitor_gap_after, :score, :reason_code, :constraints::jsonb,
+                    :competitor_gap_after, :score, :reason_code, CAST(:constraints AS JSONB),
                     'pending', :run_id, :created_by
                 )
                 """

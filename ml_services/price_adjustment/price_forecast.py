@@ -5,7 +5,7 @@ from typing import Dict, Any
 import numpy as np
 import pandas as pd
 from sqlalchemy import text
-from .config import get_engine
+from config import get_engine
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 from sklearn.compose import ColumnTransformer

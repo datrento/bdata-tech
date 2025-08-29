@@ -7,7 +7,7 @@ from typing import List, Dict, Any
 import pandas as pd
 from sqlalchemy import text, true
 
-from .config import get_engine
+from config import get_engine
 
 
 def fetch_candidates(auto_apply_pending: bool=True, limit: int=200) -> pd.DataFrame:
@@ -85,13 +85,13 @@ def apply_one(conn, proposal: Dict[str, Any]) -> str:
         )
 
     # 2) Insert history
-    conn.execute(
+    res = conn.execute(
         text(
             """
             INSERT INTO platform_product_price_history
-                (sku, old_price, adjusted_price, change_type, changed_by, notes)
+                (sku, old_price, adjusted_price, change_type, changed_by, notes, proposal_id)
             VALUES
-                (:sku, :old_price, :new_price, 'proposal_apply', :by, :reason)
+                (:sku, :old_price, :new_price, 'proposal_apply', :by, :reason, :pid)
             """
         ),
         {
@@ -100,6 +100,7 @@ def apply_one(conn, proposal: Dict[str, Any]) -> str:
             "new_price": new_price,
             "by": os.getenv("APPLIED_BY", "price-applier"),
             "reason": reason_code,
+            "pid": int(proposal["id"]),
         },
     )
 
