@@ -311,6 +311,38 @@ services:
     networks:
       - common-network
 
+  # Price adjustment service
+  price-adjustment:
+    # build:
+    #   context: ./ml_services/price_adjustment
+    #   dockerfile: Dockerfile
+    image: abiget/price-adjuster:0.1
+    container_name: price-adjustment
+    platform: linux/amd64
+    environment:
+      - PRICE_GRID_PCT=${PRICE_GRID_PCT}
+      - MIN_MARGIN_PCT=${MIN_MARGIN_PCT}
+      - DASK_WORKERS=${DASK_WORKERS}
+      - DASK_DASHBOARD=${DASK_DASHBOARD}
+      - TARGET_UNDERCUT_PCT=${TARGET_UNDERCUT_PCT}
+      - GAP_TOLERANCE_PCT=${GAP_TOLERANCE_PCT}
+      - FORECAST_MIN_CONF=${FORECAST_MIN_CONF}
+      - RUN_INTERVAL_SECONDS=${RUN_INTERVAL_SECONDS}
+      - AUTO_APPLY_PENDING=${AUTO_APPLY_PENDING}
+      - APPLY_LIMIT=${APPLY_LIMIT}
+    depends_on:
+      - postgres
+      - flink-jobmanager
+      - kafka
+      - market-data-api
+      - price-sensitivity-updater
+    volumes:
+      - ./ml_services/price_adjustment:/app
+    command: ["sh", "-c", "while true; do python price_adjustment.py && python apply_proposals.py; sleep ${RUN_INTERVAL_SECONDS:-300}; done"]
+    restart: unless-stopped
+    networks:
+      - common-network
+
 volumes:
   kafka-data:
   postgres_data:

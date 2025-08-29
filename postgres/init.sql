@@ -31,17 +31,17 @@ CREATE TABLE
     );
 
 -- Universal product mapping table
-CREATE TABLE
-    IF NOT EXISTS product_mapping (
-        id BIGSERIAL PRIMARY KEY,
-        product_id BIGINT NOT NULL,
-        amazon_asin VARCHAR(100) NOT NULL,
-        ebay_item_id VARCHAR(100) NOT NULL,
-        bestbuy_sku VARCHAR(100) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (product_id) REFERENCES platform_products (id)
-    );
+-- CREATE TABLE
+--     IF NOT EXISTS product_mapping (
+--         id BIGSERIAL PRIMARY KEY,
+--         product_id BIGINT NOT NULL,
+--         amazon_asin VARCHAR(100) NOT NULL,
+--         ebay_item_id VARCHAR(100) NOT NULL,
+--         bestbuy_sku VARCHAR(100) NOT NULL,
+--         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+--         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+--         FOREIGN KEY (product_id) REFERENCES platform_products (id)
+--     );
 
 -- Competitor price history table (data from Kafka)
 CREATE TABLE
@@ -280,3 +280,59 @@ ALTER TABLE IF EXISTS public.price_signals REPLICA IDENTITY FULL;
 ALTER TABLE IF EXISTS public.platform_products REPLICA IDENTITY FULL;
 ALTER TABLE IF EXISTS public.user_behavior_summary REPLICA IDENTITY FULL;
 ALTER TABLE IF EXISTS public.price_movements REPLICA IDENTITY FULL;
+-- ------------------------------------------------------------
+-- Price adjustment runs and proposals
+-- ------------------------------------------------------------
+-- Price adjustment runs metadata
+CREATE TABLE
+    IF NOT EXISTS price_adjustment_runs (
+        id BIGSERIAL PRIMARY KEY,
+        started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        finished_at TIMESTAMP NULL,
+        parameters JSONB NULL,
+        candidates_count INT NOT NULL DEFAULT 0,
+        proposed_count INT NOT NULL DEFAULT 0,
+        created_by VARCHAR(64) NULL
+    );
+
+-- Price adjustment proposals
+CREATE TABLE
+    IF NOT EXISTS price_adjustments (
+        id BIGSERIAL PRIMARY KEY,
+        sku VARCHAR(100) NOT NULL,
+        old_price DECIMAL(10, 2) NULL,
+        proposed_price DECIMAL(10, 2) NOT NULL,
+        elasticity_used DECIMAL(6, 3) NULL,
+        expected_demand_delta DOUBLE PRECISION NULL,
+        expected_profit_delta DOUBLE PRECISION NULL,
+        competitor_gap_after DECIMAL(6, 2) NULL,
+        score DOUBLE PRECISION NULL,
+        reason_code VARCHAR(64) NULL,
+        constraints JSONB NULL,
+        status VARCHAR(16) NOT NULL DEFAULT 'pending',
+        effective_from TIMESTAMP NULL,
+        expires_at TIMESTAMP NULL,
+        run_id BIGINT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_by VARCHAR(64) NULL,
+        approved_at TIMESTAMP NULL,
+        approved_by VARCHAR(64) NULL,
+        applied_at TIMESTAMP NULL,
+        notes TEXT NULL,
+        FOREIGN KEY (sku) REFERENCES platform_products (sku),
+        FOREIGN KEY (run_id) REFERENCES price_adjustment_runs (id),
+        CONSTRAINT price_adjustments_status_chk CHECK (status IN ('pending','approved','applied','rejected','expired'))
+    );
+
+CREATE INDEX IF NOT EXISTS idx_price_adjustments_sku_status ON price_adjustments (sku, status);
+CREATE INDEX IF NOT EXISTS idx_price_adjustments_created_at ON price_adjustments (created_at DESC);
+
+-- Ensure CDC provides before images if needed later
+ALTER TABLE IF EXISTS public.price_adjustments REPLICA IDENTITY FULL;
+ALTER TABLE IF EXISTS public.price_adjustment_runs REPLICA IDENTITY FULL;
+
+
+ALTER TABLE IF EXISTS public.platform_product_price_history
+  ADD COLUMN IF NOT EXISTS proposal_id BIGINT NULL REFERENCES price_adjustments(id);
+
+-- idx_ppph_sku_time is created earlier; avoid duplicate definition
