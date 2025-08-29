@@ -62,7 +62,7 @@ def load_trends(days: int = 1):
     query = f"""
         SELECT
             product_sku,
-            competitor_name,
+            competitor_name AS competitor_code,
             window_start,
             window_end,
             avg_price,
@@ -77,6 +77,36 @@ def load_trends(days: int = 1):
         df['window_start'] = pd.to_datetime(df['window_start'])
         df['window_end'] = pd.to_datetime(df['window_end'])
     return df
+
+@st.cache_data(ttl=10)
+def load_price_movements(days: int = 1):
+    engine = get_db_connection()
+    try:
+        query = f"""
+            SELECT 
+                pm.product_sku,
+                pm.competitor_id,
+                ec.code AS competitor_code,
+                pm.previous_price,
+                pm.new_price,
+                pm.pct_change,
+                pm.direction,
+                pm.in_stock,
+                pm.event_time
+            FROM price_movements pm
+            JOIN external_competitors ec ON pm.competitor_id = ec.id
+            WHERE pm.event_time > NOW() - INTERVAL '{days} days'
+            ORDER BY pm.event_time DESC
+        """
+        df = pd.read_sql(query, engine)
+        if not df.empty:
+            df['event_time'] = pd.to_datetime(df['event_time'])
+            # Floor to 5-minute buckets
+            df['bucket_5m'] = df['event_time'].dt.floor('5min')
+        return df
+    except Exception:
+        # Table may not exist yet
+        return pd.DataFrame(columns=['product_sku','competitor_code','previous_price','new_price','pct_change','direction','in_stock','event_time','bucket_5m'])
 
 # --------------------
 # Controls
@@ -99,7 +129,7 @@ with col_b:
                                       default=products[:min(3, len(products))],
                                       help="Choose specific products to analyze. Select multiple to compare trends.")
 with col_c:
-    competitors = sorted(trends['competitor_name'].unique())
+    competitors = sorted(trends['competitor_code'].unique())
     selected_competitors = st.multiselect("Select Competitors to Monitor", competitors, 
                                          default=competitors[:min(5, len(competitors))],
                                          help="Choose which competitors to include in the analysis.")
@@ -108,7 +138,7 @@ filtered = trends.copy()
 if selected_products:
     filtered = filtered[filtered['product_sku'].isin(selected_products)]
 if selected_competitors:
-    filtered = filtered[filtered['competitor_name'].isin(selected_competitors)]
+    filtered = filtered[filtered['competitor_code'].isin(selected_competitors)]
 
 # --------------------
 # KPIs (focused, selection-aware)
@@ -122,11 +152,11 @@ stable_trend_pct = max(0.0, 100.0 - upward_trend_pct - downward_trend_pct)
 # Compute top movers (net % change) and most volatile pair
 def compute_top_movers(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
-        return pd.DataFrame(columns=["product_sku", "competitor_name", "avg_price_first", "avg_price_last", "net_change", "pct_change"])
-    ordered = df.sort_values(['product_sku', 'competitor_name', 'window_start'])
-    first = ordered.groupby(['product_sku', 'competitor_name']).first().reset_index()[['product_sku', 'competitor_name', 'avg_price']]
-    last = ordered.groupby(['product_sku', 'competitor_name']).last().reset_index()[['product_sku', 'competitor_name', 'avg_price']]
-    merged = first.merge(last, on=['product_sku', 'competitor_name'], suffixes=('_first', '_last'))
+        return pd.DataFrame(columns=["product_sku", "competitor_code", "avg_price_first", "avg_price_last", "net_change", "pct_change"])
+    ordered = df.sort_values(['product_sku', 'competitor_code', 'window_start'])
+    first = ordered.groupby(['product_sku', 'competitor_code']).first().reset_index()[['product_sku', 'competitor_code', 'avg_price']]
+    last = ordered.groupby(['product_sku', 'competitor_code']).last().reset_index()[['product_sku', 'competitor_code', 'avg_price']]
+    merged = first.merge(last, on=['product_sku', 'competitor_code'], suffixes=('_first', '_last'))
     merged['net_change'] = merged['avg_price_last'] - merged['avg_price_first']
     merged['pct_change'] = (merged['net_change'] / merged['avg_price_first'].replace(0, pd.NA)) * 100
     merged = merged.dropna(subset=['pct_change'])
@@ -134,7 +164,7 @@ def compute_top_movers(df: pd.DataFrame) -> pd.DataFrame:
 
 movers = compute_top_movers(filtered)
 most_volatile = (
-    filtered.groupby(['product_sku', 'competitor_name'])['price_volatility']
+    filtered.groupby(['product_sku', 'competitor_code'])['price_volatility']
     .mean()
     .reset_index()
     .sort_values('price_volatility', ascending=False)
@@ -146,15 +176,15 @@ volatile_label, volatile_val = "—", None
 
 if not movers.empty:
     top_inc = movers.sort_values('pct_change', ascending=False).iloc[0]
-    top_inc_label = f"{top_inc['product_sku']} • {top_inc['competitor_name']}"
+    top_inc_label = f"{top_inc['product_sku']} • {top_inc['competitor_code']}"
     top_inc_val = f"{top_inc['pct_change']:.2f}%"
     top_dec = movers.sort_values('pct_change', ascending=True).iloc[0]
-    top_dec_label = f"{top_dec['product_sku']} • {top_dec['competitor_name']}"
+    top_dec_label = f"{top_dec['product_sku']} • {top_dec['competitor_code']}"
     top_dec_val = f"{top_dec['pct_change']:.2f}%"
 
 if not most_volatile.empty:
     mv = most_volatile.iloc[0]
-    volatile_label = f"{mv['product_sku']} • {mv['competitor_name']}"
+    volatile_label = f"{mv['product_sku']} • {mv['competitor_code']}"
     volatile_val = f"{mv['price_volatility']:.2f}"
 
 st.markdown("### Key Performance Indicators")
@@ -187,10 +217,10 @@ fig_event = px.line(
     filtered.sort_values('window_start'),
     x='window_start',
     y='avg_price',
-    color='competitor_name',
+    color='competitor_code',
     markers=True,
     line_dash='product_sku',
-    hover_data=['competitor_name', 'price_volatility']
+    hover_data=['competitor_code', 'price_volatility']
 )
 fig_event.update_layout(
     xaxis_title='Event Time (Window Start)',
@@ -214,10 +244,10 @@ fig_vol = px.line(
     filtered.sort_values('window_start'),
     x='window_start',
     y='price_volatility',
-    color='competitor_name',
+    color='competitor_code',
     line_dash='product_sku',
     markers=True,
-    hover_data=['competitor_name', 'product_sku', 'avg_price']
+    hover_data=['competitor_code', 'product_sku', 'avg_price']
 )
 fig_vol.update_layout(
     xaxis_title='Event Time',
@@ -243,7 +273,7 @@ heatmap_data['hour_formatted'] = heatmap_data['hour'].dt.strftime('%H:%M')
 
 # Create a combined label for row index
 heatmap_data['product_competitor'] = (
-    heatmap_data['product_sku'].astype(str) + " | " + heatmap_data['competitor_name'].astype(str)
+    heatmap_data['product_sku'].astype(str) + " | " + heatmap_data['competitor_code'].astype(str)
 )
 
 # Pivot table: rows = product+competitor, columns = hour, values = avg_price
@@ -294,7 +324,7 @@ This heatmap shows which product-competitor combinations have the most volatile 
 """)
 
 volatility_pivot = filtered.pivot_table(
-    index='competitor_name', 
+    index='competitor_code', 
     columns='product_sku', 
     values='price_volatility', 
     aggfunc='mean'
@@ -330,11 +360,11 @@ cs3.metric("Windows Stable", f"{stable_trend_count}")
 
 def compute_top_movers(df: pd.DataFrame, top_n: int = 5) -> pd.DataFrame:
     if df.empty:
-        return pd.DataFrame(columns=["product_sku", "competitor_name", "first_price", "last_price", "net_change", "pct_change"])
-    ordered = df.sort_values(['product_sku', 'competitor_name', 'window_start'])
-    first = ordered.groupby(['product_sku', 'competitor_name']).first().reset_index()[['product_sku', 'competitor_name', 'avg_price']]
-    last = ordered.groupby(['product_sku', 'competitor_name']).last().reset_index()[['product_sku', 'competitor_name', 'avg_price']]
-    merged = first.merge(last, on=['product_sku', 'competitor_name'], suffixes=('_first', '_last'))
+        return pd.DataFrame(columns=["product_sku", "competitor_code", "first_price", "last_price", "net_change", "pct_change"])
+    ordered = df.sort_values(['product_sku', 'competitor_code', 'window_start'])
+    first = ordered.groupby(['product_sku', 'competitor_code']).first().reset_index()[['product_sku', 'competitor_code', 'avg_price']]
+    last = ordered.groupby(['product_sku', 'competitor_code']).last().reset_index()[['product_sku', 'competitor_code', 'avg_price']]
+    merged = first.merge(last, on=['product_sku', 'competitor_code'], suffixes=('_first', '_last'))
     merged['net_change'] = merged['avg_price_last'] - merged['avg_price_first']
     merged['pct_change'] = (merged['net_change'] / merged['avg_price_first'].replace(0, pd.NA)) * 100
     merged = merged.dropna(subset=['pct_change'])
@@ -346,8 +376,8 @@ with col_inc:
     st.markdown("**Top Increases (net %)**")
     if not tm.empty:
         st.dataframe(
-            tm.sort_values('pct_change', ascending=False).head(5)[['product_sku', 'competitor_name', 'pct_change']]
-            .rename(columns={'product_sku': 'Product SKU', 'competitor_name': 'Competitor', 'pct_change': 'Net %'}),
+            tm.sort_values('pct_change', ascending=False).head(5)[['product_sku', 'competitor_code', 'pct_change']]
+            .rename(columns={'product_sku': 'Product SKU', 'competitor_code': 'Competitor', 'pct_change': 'Net %'}),
             use_container_width=True
         )
     else:
@@ -356,8 +386,8 @@ with col_dec:
     st.markdown("**Top Decreases (net %)**")
     if not tm.empty:
         st.dataframe(
-            tm.sort_values('pct_change', ascending=True).head(5)[['product_sku', 'competitor_name', 'pct_change']]
-            .rename(columns={'product_sku': 'Product SKU', 'competitor_name': 'Competitor', 'pct_change': 'Net %'}),
+            tm.sort_values('pct_change', ascending=True).head(5)[['product_sku', 'competitor_code', 'pct_change']]
+            .rename(columns={'product_sku': 'Product SKU', 'competitor_code': 'Competitor', 'pct_change': 'Net %'}),
             use_container_width=True
         )
     else:
@@ -394,3 +424,75 @@ st.download_button(
     file_name=f"price_trends_{days}d.csv",
     mime='text/csv'
 )
+
+# --------------------
+# Raw Price Movements (5-minute buckets)
+# --------------------
+st.subheader("Raw Price Movements (5-minute buckets)")
+try:
+    import os
+    seq_thr = float(os.getenv('SEQUENTIAL_CHANGE_THRESHOLD', '10'))
+    st.caption(f"Rule: Sequential change events are recorded when |Δ%| ≥ {seq_thr:.1f}%")
+except Exception:
+    pass
+movements = load_price_movements(days)
+if movements.empty:
+    st.info("No price movement telemetry available for the selected timeframe.")
+else:
+    # Apply current selections if any
+    mv = movements.copy()
+    if 'selected_products' in locals() and selected_products:
+        mv = mv[mv['product_sku'].isin(selected_products)]
+    if 'selected_competitors' in locals() and selected_competitors:
+        mask = mv['competitor_code'].isin(selected_competitors) if 'competitor_code' in mv.columns else pd.Series([True]*len(mv))
+        mv = mv[mask]
+    # remove debug
+
+
+    if mv.empty:
+        st.info("No movements under current selections. Showing all for the timeframe.")
+        mv = movements.copy()
+    if not mv.empty:
+        # Counts per 5-min bucket by direction
+        counts = (
+            mv.groupby(['bucket_5m','direction']).size().reset_index(name='count')
+        )
+        fig_counts = px.bar(
+            counts, x='bucket_5m', y='count', color='direction', barmode='stack',
+            title='Movement Count by 5-minute Bucket', labels={'bucket_5m':'Time Bucket','count':'Movements'}
+        )
+        st.plotly_chart(fig_counts, use_container_width=True)
+
+        # Up vs Down share
+        dir_share = mv['direction'].value_counts().reset_index()
+        dir_share.columns = ['Direction','Count']
+        fig_share = px.pie(dir_share, names='Direction', values='Count', title='Up vs Down Share', hole=0.4)
+        fig_share.update_traces(textposition='inside', textinfo='percent+label')
+        st.plotly_chart(fig_share, use_container_width=True)
+
+        # Histogram of pct_change (absolute)
+        st.markdown("**Distribution of |pct_change|**")
+        mv['abs_pct_change'] = mv['pct_change'].abs()
+        fig_hist = px.histogram(mv, x='abs_pct_change', nbins=30, title='Histogram of Absolute % Change', labels={'abs_pct_change':'Absolute % Change'})
+        st.plotly_chart(fig_hist, use_container_width=True)
+
+        # Recent movements table
+        st.markdown("**Recent Movements**")
+        st.dataframe(
+            mv[['event_time','product_sku','competitor_code','previous_price','new_price','pct_change','direction']]
+              .sort_values('event_time', ascending=False)
+              .head(500),
+            use_container_width=True,
+            column_config={
+                'event_time': st.column_config.DatetimeColumn("Event Time", format="DD/MM/YYYY HH:mm"),
+                'product_sku': st.column_config.TextColumn("Product SKU"),
+                'competitor_code': st.column_config.TextColumn("Competitor"),
+                'previous_price': st.column_config.NumberColumn("Previous Price", format="$%.2f"),
+                'new_price': st.column_config.NumberColumn("New Price", format="$%.2f"),
+                'pct_change': st.column_config.NumberColumn("% Change", format="%.2f%%"),
+                'direction': st.column_config.TextColumn("Direction")
+            },
+            hide_index=True
+        )
+    else:
+        st.info("No price movement telemetry available for the timeframe.")

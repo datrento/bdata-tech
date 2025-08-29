@@ -202,6 +202,42 @@ def load_trend_snapshot(days: int = 1):
     df = pd.read_sql(query, engine)
     return df
 
+@st.cache_data(ttl=10)
+def load_user_behavior_summary(days: int = 2):
+    engine = get_db_connection()
+    try:
+        query = f"""
+        SELECT product_sku, window_start, window_end, search_rate, unique_visitors
+        FROM user_behavior_summary
+        WHERE window_end > NOW() - INTERVAL '{days} days'
+        """
+        df = pd.read_sql(query, engine)
+        if not df.empty:
+            df['window_start'] = pd.to_datetime(df['window_start'])
+            df['window_end'] = pd.to_datetime(df['window_end'])
+        return df
+    except Exception:
+        return pd.DataFrame(columns=['product_sku','window_start','window_end','search_rate','unique_visitors'])
+
+@st.cache_data(ttl=10)
+def load_demand_vs_signals(days: int = 1):
+    engine = get_db_connection()
+    try:
+        query = f"""
+        SELECT product_sku, window_start, window_end, engagement_delta, undercut_cnt,
+               avg_undercut_gap_pct, avg_abrupt_inc_gap_pct, avg_overpriced_gap_pct,
+               price_position, score
+        FROM demand_vs_signals
+        WHERE window_end > NOW() - INTERVAL '{days} days'
+        """
+        df = pd.read_sql(query, engine)
+        if not df.empty:
+            df['window_start'] = pd.to_datetime(df['window_start'])
+            df['window_end'] = pd.to_datetime(df['window_end'])
+        return df
+    except Exception:
+        return pd.DataFrame(columns=['product_sku','window_start','window_end','engagement_delta','undercut_cnt','avg_undercut_gap_pct','avg_abrupt_inc_gap_pct','avg_overpriced_gap_pct','price_position','score'])
+
 @st.cache_data(ttl=60)
 def load_competitor_lookup():
     engine = get_db_connection()
@@ -352,6 +388,108 @@ try:
 
         chip_html += "</div>"
         st.markdown(chip_html, unsafe_allow_html=True)
+
+        # Compact display of active signal rule thresholds
+        try:
+            u_thr = float(os.getenv('UNDERCUT_PERCENT_THRESHOLD', '5'))
+            o_thr = float(os.getenv('OVERPRICED_PERCENT_THRESHOLD', '5'))
+            a_thr = float(os.getenv('PRICE_INCREASE_24HRS_THRESHOLD', '10'))
+            st.caption("Signal rules")
+            rules_html = "<div class='status-row'>"
+            rules_html += f"<span class='status-chip' title='Competitor below our price by at least this gap'>Undercut ≥ {u_thr:.1f}%</span>"
+            rules_html += f"<span class='status-chip' title='Our price below competitor by at least this gap'>Overpriced ≥ {o_thr:.1f}%</span>"
+            rules_html += f"<span class='status-chip' title='Increase from recent minimum within 24h'>Abrupt Increase ≥ {a_thr:.1f}%</span>"
+            rules_html += "</div>"
+            st.markdown(rules_html, unsafe_allow_html=True)
+        except Exception:
+            pass
+
+        # Demand & Opportunity (Engagement shifts and opportunity score)
+        try:
+            behavior = load_user_behavior_summary(days=2)
+            dvs = load_demand_vs_signals(days=1)
+
+            # Respect category filters when possible
+            allowed_skus = None
+            try:
+                if 'product_lookup' in locals() and product_lookup is not None and not product_lookup.empty:
+                    if 'sel' in locals() and sel:
+                        allowed_skus = product_lookup[product_lookup['category'].isin(sel)]['sku'].unique().tolist()
+            except Exception:
+                pass
+
+            if allowed_skus is not None:
+                if behavior is not None and not behavior.empty:
+                    behavior = behavior[behavior['product_sku'].isin(allowed_skus)]
+                if dvs is not None and not dvs.empty:
+                    dvs = dvs[dvs['product_sku'].isin(allowed_skus)]
+
+            st.markdown("<h2 class='sub-header'>Demand & Opportunity</h2>", unsafe_allow_html=True)
+            d1, d2, d3 = st.columns(3)
+
+            # Engagement delta 1h and 24h using search_rate as engagement metric
+            if behavior is not None and not behavior.empty:
+                now_ts = datetime.now()
+                last_1h = behavior[behavior['window_end'] > now_ts - timedelta(hours=1)]
+                prev_1h = behavior[(behavior['window_end'] <= now_ts - timedelta(hours=1)) & (behavior['window_end'] > now_ts - timedelta(hours=2))]
+                last_24h = behavior[behavior['window_end'] > now_ts - timedelta(days=1)]
+                prev_24h = behavior[(behavior['window_end'] <= now_ts - timedelta(days=1)) & (behavior['window_end'] > now_ts - timedelta(days=2))]
+
+                def avg_sr(df):
+                    return df['search_rate'].mean() if df is not None and not df.empty else None
+
+                sr_1h_now = avg_sr(last_1h)
+                sr_1h_prev = avg_sr(prev_1h)
+                sr_24h_now = avg_sr(last_24h)
+                sr_24h_prev = avg_sr(prev_24h)
+
+                delta_1h = (sr_1h_now - sr_1h_prev) if (sr_1h_now is not None and sr_1h_prev is not None) else None
+                delta_24h = (sr_24h_now - sr_24h_prev) if (sr_24h_now is not None and sr_24h_prev is not None) else None
+
+                with d1:
+                    st.metric("Engagement Δ (1h)", f"{delta_1h:.3f}" if delta_1h is not None else "—",
+                              help="Change in average search_rate vs previous hour")
+                with d2:
+                    st.metric("Engagement Δ (24h)", f"{delta_24h:.3f}" if delta_24h is not None else "—",
+                              help="Change in average search_rate vs previous day")
+            else:
+                with d1:
+                    st.metric("Engagement Δ (1h)", "—")
+                with d2:
+                    st.metric("Engagement Δ (24h)", "—")
+
+            # Top 5 opportunity SKUs from demand_vs_signals
+            if dvs is not None and not dvs.empty:
+                # Latest window per SKU
+                latest = dvs.sort_values('window_end').drop_duplicates(subset=['product_sku'], keep='last')
+                top5 = latest.sort_values('score', ascending=False).head(5).copy()
+                # Join product names for readability
+                try:
+                    if product_lookup is not None and not product_lookup.empty:
+                        top5 = top5.merge(product_lookup[['sku','name','category']], left_on='product_sku', right_on='sku', how='left')
+                        top5['label'] = top5.apply(lambda r: f"{r['name']} ({r['product_sku']})" if pd.notna(r.get('name')) else r['product_sku'], axis=1)
+                    else:
+                        top5['label'] = top5['product_sku']
+                except Exception:
+                    top5['label'] = top5['product_sku']
+
+                with d3:
+                    st.markdown("**Top 5 Opportunity Products**")
+                    st.dataframe(
+                        top5[['label','score','engagement_delta','undercut_cnt','price_position']]
+                            .rename(columns={'label':'Product','undercut_cnt':'Undercuts','price_position':'Position'}),
+                        use_container_width=True,
+                        column_config={
+                            'Product': st.column_config.TextColumn("Product"),
+                            'score': st.column_config.NumberColumn("Score", format="%.3f"),
+                            'engagement_delta': st.column_config.NumberColumn("Engagement Δ", format="%.3f"),
+                            'Undercuts': st.column_config.NumberColumn("Undercuts"),
+                            'Position': st.column_config.TextColumn("Price Position")
+                        },
+                        hide_index=True
+                    )
+        except Exception:
+            pass
         
         # Overview metrics section
         st.markdown("<h2 class='sub-header'>Market Overview</h2>", unsafe_allow_html=True)
@@ -368,6 +506,16 @@ try:
         avg_overpriced = price_signals.loc[price_signals['signal_type_norm'] == 'OVERPRICED', 'percentage_diff'].abs().mean() if overpriced_cnt > 0 else 0
         # Actionable signals exclude sequential changes
         actionable_signals = price_signals[~price_signals['signal_type_norm'].eq('SEQUENTIAL_CHANGE')].copy()
+        # Recompute KPIs to strictly exclude sequential changes
+        total_signals = len(actionable_signals)
+        high_priority = actionable_signals[actionable_signals['priority'] == 1].shape[0]
+        undercuts = actionable_signals[actionable_signals['signal_type_norm'] == 'UNDERCUT'].shape[0]
+        overpriced_cnt = actionable_signals[actionable_signals['signal_type_norm'] == 'OVERPRICED'].shape[0]
+        stockouts = actionable_signals[actionable_signals['signal_type_norm'] == 'STOCKOUT'].shape[0]
+        inc24h = actionable_signals[actionable_signals['signal_type_norm'] == 'PRICE_INCREASE_24H'].shape[0]
+
+        avg_undercut = actionable_signals.loc[actionable_signals['signal_type_norm'] == 'UNDERCUT', 'percentage_diff'].abs().mean() if undercuts > 0 else 0
+        avg_overpriced = actionable_signals.loc[actionable_signals['signal_type_norm'] == 'OVERPRICED', 'percentage_diff'].abs().mean() if overpriced_cnt > 0 else 0
 
         # Display metrics in columns with improved layout
         st.markdown('<div class="key-metrics">', unsafe_allow_html=True)

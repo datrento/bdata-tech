@@ -94,6 +94,22 @@ CREATE TABLE
         UNIQUE (product_sku, competitor_id, signal_type)
     );
 
+-- Price movements table
+CREATE TABLE IF NOT EXISTS price_movements (
+  id BIGSERIAL PRIMARY KEY,
+  product_sku VARCHAR(100) NOT NULL,
+  competitor_id BIGINT NOT NULL,
+  previous_price DECIMAL(10,2) NOT NULL,
+  new_price DECIMAL(10,2) NOT NULL,
+  pct_change DECIMAL(6,2) NOT NULL,
+  direction VARCHAR(8) NOT NULL, -- 'up' | 'down'
+  in_stock BOOLEAN,
+  event_time TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (product_sku) REFERENCES platform_products (sku),
+  FOREIGN KEY (competitor_id) REFERENCES external_competitors (id),
+  UNIQUE (product_sku, competitor_id, event_time)
+);
 
 -- Aggregator data table (data from Kafka)
 CREATE TABLE
@@ -119,7 +135,17 @@ CREATE TABLE
         price DECIMAL(10, 2) NOT NULL,
         demand INT NOT NULL
     );
-CREATE INDEX IF NOT EXISTS idx_pdo_sku_time ON price_demand_observations (sku, observed_at DESC);
+
+-- Price sensitivity history (time-series of elasticity/sensitivity labels)
+CREATE TABLE IF NOT EXISTS price_sensitivity_history (
+    id BIGSERIAL PRIMARY KEY,
+    sku VARCHAR(100) NOT NULL,
+    price_elasticity DOUBLE PRECISION NOT NULL,
+    price_sensitivity VARCHAR(50) NOT NULL,
+    observations INT NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (sku) REFERENCES platform_products (sku)
+);
 
 -- Product market summary table
 CREATE TABLE
@@ -145,6 +171,8 @@ CREATE TABLE
         adjusted_price DECIMAL(10, 2) NOT NULL,
         change_type VARCHAR(32),
         changed_by VARCHAR(64),
+        source VARCHAR(32),
+        reason_code VARCHAR(64),
         change_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         notes TEXT,
         FOREIGN KEY (sku) REFERENCES platform_products (sku)
@@ -231,16 +259,27 @@ CREATE INDEX idx_price_trends_time ON price_trends (window_start, window_end);
 
 CREATE INDEX IF NOT EXISTS idx_competitor_price_sku_time ON competitor_price_history (product_sku, collection_timestamp);
 
+-- add index for price demand observations
+CREATE INDEX IF NOT EXISTS idx_pdo_sku_time ON price_demand_observations (sku, observed_at DESC);
+
 -- add indexes for the user behaviour, user behavior summary and demand vs price signals
 CREATE INDEX idx_user_behavior_events_time ON user_behavior_events (data_timestamp, collection_timestamp);
 CREATE INDEX idx_user_behavior_summary_time ON user_behavior_summary (window_start, window_end);
 CREATE INDEX idx_demand_vs_signals_time ON demand_vs_signals (window_start, window_end);
 
+-- add indexes for the price movements table
+CREATE INDEX IF NOT EXISTS idx_price_movements_sku_time ON price_movements (product_sku, event_time DESC);
+-- fast lookups of platform price at time t
+CREATE INDEX IF NOT EXISTS idx_ppph_sku_time ON platform_product_price_history (sku, change_timestamp DESC);
+
+-- add index for price sensitivity history
+CREATE INDEX IF NOT EXISTS idx_psh_sku_time ON price_sensitivity_history (sku, updated_at DESC);
+
 -- Ensure CDC provides before images for UPDATE/DELETE
 ALTER TABLE IF EXISTS public.price_signals REPLICA IDENTITY FULL;
 ALTER TABLE IF EXISTS public.platform_products REPLICA IDENTITY FULL;
 ALTER TABLE IF EXISTS public.user_behavior_summary REPLICA IDENTITY FULL;
-
+ALTER TABLE IF EXISTS public.price_movements REPLICA IDENTITY FULL;
 -- ------------------------------------------------------------
 -- Price adjustment runs and proposals
 -- ------------------------------------------------------------
