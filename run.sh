@@ -33,7 +33,7 @@ fi
 # Parse command
 case "$1" in
   start|up)
-    echo "Starting services..."
+  echo "Starting services..."
     $compose up -d --remove-orphans
     echo -e "${GREEN}Services started!${NC}"
     echo "Dashboard: $(grep DASHBOARD_URL .env | cut -d= -f2)"
@@ -41,6 +41,7 @@ case "$1" in
     echo "Adminer UI: $(grep ADMINER_URL .env | cut -d= -f2)"
     echo "Data API: $(grep DATA_API_URL .env | cut -d= -f2)/docs"
     echo "Flink UI: $(grep FLINK_UI_URL .env | cut -d= -f2)"
+    echo "Mongo Express UI: $(grep MONGO_EXPRESS_URL .env | cut -d= -f2)"
     ;;
   stop|down)
     echo "Stopping services..."
