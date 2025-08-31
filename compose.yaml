@@ -63,6 +63,99 @@ services:
       retries: 3
       start_period: 30s
 
+  # Kafka Connect with MongoDB Sink plugin
+  kafka-connect:
+    build:
+      context: .
+      dockerfile: kafka/connect/Dockerfile
+    container_name: kafka-connect
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    ports:
+      - "8083:8083"  # Kafka Connect REST API
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka:9093
+      CONNECT_GROUP_ID: connect-cluster
+      CONNECT_CONFIG_STORAGE_TOPIC: _connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: _connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: _connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_PLUGIN_PATH: /usr/share/java,/etc/kafka-connect/jars
+    networks:
+      - common-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8083/connectors || exit 1" ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+
+  # One-shot init to register the MongoDB sink connector after Connect is ready
+  kafka-connect-init:
+    image: curlimages/curl:8.9.1
+    container_name: kafka-connect-init
+    depends_on:
+      kafka-connect:
+        condition: service_healthy
+    networks:
+      - common-network
+    restart: "no"
+    volumes:
+      - ./kafka/connect/mongodb-sink.json:/configs/mongodb-sink.json:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -eu
+        until curl -fsS http://kafka-connect:8083/connectors >/dev/null; do sleep 2; done
+        curl -fsS -X POST -H 'Content-Type: application/json' \
+          --data @/configs/mongodb-sink.json \
+          http://kafka-connect:8083/connectors || true
+
+  # MongoDB database
+  mongo:
+    image: mongo:7
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - common-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 })"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Mongo Express UI for MongoDB (development only)
+  mongo-express:
+    image: mongo-express:1.0.2
+    container_name: mongo-express
+    restart: unless-stopped
+    ports:
+      - "8089:8081"   # Web UI at http://localhost:8089
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongo:27017
+      ME_CONFIG_BASICAUTH_USERNAME: "admin"
+      ME_CONFIG_BASICAUTH_PASSWORD: "admin"
+      ME_CONFIG_OPTIONS_EDITORTHEME: ambiance
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - common-network
+
   # PostgreSQL database for storing data
   postgres:
     image: postgres
@@ -347,5 +440,6 @@ volumes:
   kafka-data:
   postgres_data:
   flink_data:
+  mongo_data:
 networks:
   common-network:
