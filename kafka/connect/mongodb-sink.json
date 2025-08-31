@@ -1,0 +1,22 @@
+{
+  "name": "mongo-sink-market-data-v2",
+  "config": {
+    "connector.class": "com.mongodb.kafka.connect.MongoSinkConnector",
+    "tasks.max": "1",
+    "topics": "market-data-raw,aggregator-prices,user-behavior-events,competitor-prices",
+    "connection.uri": "mongodb://mongo:27017",
+    "database": "price_intel",
+    "topic.namespace.map": "market-data-raw:price_intel.market_data_raw,aggregator-prices:price_intel.aggregator_prices,user-behavior-events:price_intel.user_behavior_events,competitor-prices:price_intel.competitor_prices",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false",
+    "writemodel.strategy": "com.mongodb.kafka.connect.sink.writemodel.strategy.ReplaceOneDefaultStrategy",
+    "document.id.strategy": "com.mongodb.kafka.connect.sink.processor.id.strategy.PartialValueStrategy",
+    "document.id.strategy.partial.value.projection.list": "message_id",
+    "document.id.strategy.partial.value.projection.type": "AllowList",
+    "consumer.override.auto.offset.reset": "earliest",
+    "errors.tolerance": "all",
+    "errors.log.enable": "true",
+    "errors.log.include.messages": "true"
+  }
+}
