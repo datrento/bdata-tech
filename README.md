@@ -67,10 +67,20 @@ Optional: check job status in the Flink UI (http://localhost:8081) or via CLI:
 docker exec flink-jobmanager /opt/flink/bin/flink list | cat
 ```
 
+Post MongoDB configuration JSON:
+```bash
+curl -X POST -H "Content-Type: application/json" \
+  --data @kafka/connect/mongodb-sink.json \
+  http://localhost:8083/connectors
+```
+
+Optional: check MongoDB status in the MongoDB UI (http://localhost:8099). Use 'admin' as username and password.
+
 ### URLs (defaults)
 
 - Dashboard (Streamlit): `http://localhost:8501`
 - Kafka UI: `http://localhost:8080`
+- MongoDB UI `http://localhost:8099`
 - Adminer (Postgres UI): `http://localhost:8050`
 - Flink UI: `http://localhost:8081`
 - Data API: `http://localhost:8000/docs`
