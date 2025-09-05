@@ -324,6 +324,28 @@ CREATE TABLE
         CONSTRAINT price_adjustments_status_chk CHECK (status IN ('pending','approved','applied','rejected','expired'))
     );
 
+-- Forecast metrics table
+CREATE TABLE IF NOT EXISTS forecast_metrics (
+    id SERIAL PRIMARY KEY,
+    run_id INT NOT NULL,
+    sku TEXT NOT NULL,
+    competitor_id INT NOT NULL,
+    horizon INT NOT NULL,
+    prediction NUMERIC,
+    last_price NUMERIC,
+    n_samples INT,
+    alpha NUMERIC,
+    cv_mae NUMERIC,
+    cv_rmse NUMERIC,
+    cv_r2 NUMERIC,
+    baseline_mae NUMERIC,
+    confidence NUMERIC,
+    reliable BOOLEAN,
+    pred_diff NUMERIC,
+    pred_diff_pct NUMERIC,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_price_adjustments_sku_status ON price_adjustments (sku, status);
 CREATE INDEX IF NOT EXISTS idx_price_adjustments_created_at ON price_adjustments (created_at DESC);
 
