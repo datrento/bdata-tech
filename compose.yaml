@@ -419,10 +419,15 @@ services:
       - DASK_DASHBOARD=${DASK_DASHBOARD}
       - TARGET_UNDERCUT_PCT=${TARGET_UNDERCUT_PCT}
       - GAP_TOLERANCE_PCT=${GAP_TOLERANCE_PCT}
-      - FORECAST_MIN_CONF=${FORECAST_MIN_CONF}
       - RUN_INTERVAL_SECONDS=${RUN_INTERVAL_SECONDS}
       - AUTO_APPLY_PENDING=${AUTO_APPLY_PENDING}
       - APPLY_LIMIT=${APPLY_LIMIT}
+      - MAE_THRESHOLD=${MAE_THRESHOLD}
+      - CONFIDENCE_THRESHOLD=${CONFIDENCE_THRESHOLD}
+      - FORECAST_LOOKBACK_DAYS=${FORECAST_LOOKBACK_DAYS}
+      - DEMAND_LOOKBACK_MINUTES=${DEMAND_LOOKBACK_MINUTES}
+      - GUARD_MIN_ELAPSED_MIN=${GUARD_MIN_ELAPSED_MIN}
+      - GUARD_MIN_NEW_ROWS=${GUARD_MIN_NEW_ROWS}
     depends_on:
       - postgres
       - flink-jobmanager
@@ -431,11 +436,28 @@ services:
       - price-sensitivity-updater
     volumes:
       - ./ml_services/price_adjustment:/app
-    command: ["sh", "-c", "while true; do python price_adjustment.py && python apply_proposals.py; sleep ${RUN_INTERVAL_SECONDS:-300}; done"]
+    command: ["sh", "-c", "while true; do python price_adjustment.py; sleep ${RUN_INTERVAL_SECONDS:-300}; done"]
     restart: unless-stopped
     networks:
       - common-network
-
+  
+  # Dedicated applier that runs forever and applies only approved proposals
+  price-applier:
+    image: abiget/price-adjuster:0.1
+    container_name: price-applier
+    platform: linux/amd64
+    environment:
+      - APPLY_LIMIT=${APPLY_LIMIT}
+      - AUTO_APPLY_PENDING=false
+      - TZ=Europe/Rome
+    depends_on:
+      - postgres
+    volumes:
+      - ./ml_services/price_adjustment:/app
+    command: ["sh", "-c", "while true; do python apply_proposals.py; sleep ${APPLIER_INTERVAL_SECONDS:-60}; done"]
+    restart: unless-stopped
+    networks:
+      - common-network
 volumes:
   kafka-data:
   postgres_data:

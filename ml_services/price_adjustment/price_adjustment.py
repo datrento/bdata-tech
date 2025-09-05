@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any, List
 import numpy as np
 import pandas as pd
 from sqlalchemy import text
+import datetime
 
 from dask import delayed, compute
 from dask.distributed import Client, LocalCluster
@@ -31,7 +32,8 @@ class Config:
     # Forecast-guided anchoring (simple, minimal knobs)
     target_undercut_pct: float = float(os.getenv("TARGET_UNDERCUT_PCT", "0.01")) # 1% undercut of the forecasted cheapest price
     gap_tolerance_pct: float = float(os.getenv("GAP_TOLERANCE_PCT", "0.003")) # 0.3% gap tolerance for the forecasted cheapest price
-    forecast_min_conf: float = float(os.getenv("FORECAST_MIN_CONF", "0.6")) # 60% confidence
+    forecast_lookback_days: int = int(os.getenv("FORECAST_LOOKBACK_DAYS", "14")) # 14 days
+    demand_lookback_minutes: int = int(os.getenv("DEMAND_LOOKBACK_MINUTES", "60")) # 60 minutes
 
 def fetch_active_skus(engine) -> List[str]:
     df = pd.read_sql(
@@ -87,25 +89,30 @@ def fetch_competitor_ids(engine, sku: str) -> List[int]:
     )
 
 
-def get_forecasted_cheapest(engine, sku: str, min_conf: float) -> Optional[Dict[str, Any]]:
+def get_forecasted_average(engine, sku: str, lookback_days: int) -> tuple[dict | None, list[dict]]:
     competitor_ids = fetch_competitor_ids(engine, sku)
-    predictions: List[Dict[str, Any]] = []
-    for cid in competitor_ids:
-        result = forecast_competitor_price(sku, cid, days=60, horizon=1, window_minutes=5)
-        if result and result.get("prediction") is not None and float(result.get("confidence", 0.0)) >= float(min_conf):
-            predictions.append(result)
+    if not competitor_ids:
+        return None, []
+    # Parallelize forecasts across competitors via Dask
+    tasks = [delayed(forecast_competitor_price)(sku, int(cid), days=lookback_days, horizon=1, window_minutes=5) for cid in competitor_ids]
+    results = list(compute(*tasks)) if tasks else []
+    predictions = [
+        r for r in results
+        if r and r.get("prediction") is not None and r.get("reliable", False)
+    ]
+
     if not predictions:
-        return None
-    return min(predictions, key=lambda r: float(r["prediction"]))
+        return None, []
+    return min(predictions, key=lambda r: float(r["prediction"])), results
 
 
-def load_demand_baseline(engine, sku: str) -> float:
-    """Compute a smoothed demand baseline using EMA over recent purchase rates (last 60m)."""
+def load_demand_baseline(engine, sku: str, demand_lookback_minutes: int) -> float:
+    """Compute a smoothed demand baseline using EMA over recent purchase rates (last demand_lookback_minutes minutes)."""
     q = text(
-        """
+        f"""
         SELECT window_start, window_end, purchases
         FROM user_behavior_summary
-        WHERE product_sku = :sku AND window_end > NOW() - INTERVAL '60 minutes'
+        WHERE product_sku = :sku AND window_end > NOW() - INTERVAL '{demand_lookback_minutes} minutes'
         ORDER BY window_end
         """
     )
@@ -125,7 +132,7 @@ def load_demand_baseline(engine, sku: str) -> float:
 
 
 # -------------------------
-# Pricing core (minimal)
+# Pricing logic not making the candidate price below the min viable price
 # -------------------------
 def clamp_price(candidate_price: float, cost: float, min_viable: Optional[float], min_margin_pct: float) -> float:
     margin_floor = cost * (1.0 + min_margin_pct)
@@ -142,11 +149,11 @@ def propose_for_sku(cfg: Config, feat: Dict[str, Any]) -> Optional[Dict[str, Any
     initial_demand = float(feat.get("demand_baseline", 1.0))
 
     # If a confident forecasted cheapest is available, directly target band around it
-    forecast_cheapest = feat.get("forecast_cheapest", None)
-    forecast_conf = float(feat.get("forecast_conf", 0.0))
-    if forecast_cheapest is not None and forecast_conf >= cfg.forecast_min_conf:
-        cheapest = float(forecast_cheapest)
-        target_price = cheapest * (1.0 - cfg.target_undercut_pct)
+    forecast_average_price = feat.get("forecast_average_price", None)
+    forecast_reliability = bool(feat.get("forecast_reliability", False))
+    if forecast_average_price is not None and forecast_reliability:
+        predicted_average_price = float(forecast_average_price)
+        target_price = predicted_average_price * (1.0 - cfg.target_undercut_pct)
         band_low = target_price * (1.0 - cfg.gap_tolerance_pct)
         band_high = target_price * (1.0 + cfg.gap_tolerance_pct)
         candidate_price = min(max(target_price, band_low), band_high)
@@ -154,7 +161,10 @@ def propose_for_sku(cfg: Config, feat: Dict[str, Any]) -> Optional[Dict[str, Any
 
         demand = initial_demand * (candidate_price / initial_price) ** elasticity
         profit = max(0.0, candidate_price - cost) * demand
-        gap_after = (candidate_price - cheapest) / cheapest
+        gap_after = (
+            (candidate_price - predicted_average_price) / predicted_average_price
+            if float(predicted_average_price) != 0.0 else None
+        )
 
         return {
             "sku": feat["sku"],
@@ -170,8 +180,8 @@ def propose_for_sku(cfg: Config, feat: Dict[str, Any]) -> Optional[Dict[str, Any
                 "min_margin_pct": cfg.min_margin_pct,
                 "target_undercut_pct": cfg.target_undercut_pct,
                 "gap_tolerance_pct": cfg.gap_tolerance_pct,
-                "forecast_confidence": forecast_conf,
-                "demand_baseline_minutes": 60,
+                "forecast_reliability": forecast_reliability,
+                "demand_baseline_minutes": cfg.demand_lookback_minutes,
                 "demand_ema_halflife_minutes": 60,
             },
         }
@@ -288,13 +298,107 @@ def insert_proposals(engine, run_id: int, proposals: List[Dict[str, Any]], creat
             ],
         )
 
+def insert_forecast_metrics(engine, run_id: int, forecasts: List[Dict[str, Any]]):
+    if not forecasts:
+        return
+    import numpy as np
 
-# -------------------------
-# Orchestration (Dask)
-# -------------------------
+    def to_number(value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            v = float(value)
+            if not np.isfinite(v):
+                return None
+            return v
+        except Exception:
+            return None
+
+    params: List[Dict[str, Any]] = []
+    for f in forecasts:
+        ns_raw = f.get("n_samples", f.get("num_samples", 0))
+        try:
+            n_samples = int(ns_raw or 0)
+        except Exception:
+            n_samples = 0
+        if n_samples <= 0:
+            continue
+
+        sku = f.get("sku")
+        comp = f.get("competitor_id")
+        hor = f.get("horizon", 1)
+        if sku is None or comp is None:
+            continue
+        try:
+            competitor_id = int(comp)
+            horizon = int(hor)
+        except Exception:
+            continue
+
+        row = {
+            "run_id": int(run_id),
+            "sku": str(sku),
+            "competitor_id": competitor_id,
+            "horizon": horizon,
+            "prediction": to_number(f.get("prediction")),
+            "last_price": to_number(f.get("last_price")),
+            "n_samples": n_samples,
+            "alpha": to_number(f.get("alpha")),
+            "cv_mae": to_number(f.get("cv_mae")),
+            "cv_rmse": to_number(f.get("cv_rmse")),
+            "cv_r2": to_number(f.get("cv_r2")),
+            "baseline_mae": to_number(f.get("baseline_mae")),
+            "confidence": to_number(f.get("confidence")),
+            "reliable": bool(f.get("reliable", False)),
+            "pred_diff": to_number(f.get("pred_diff")),
+            "pred_diff_pct": to_number(f.get("pred_diff_pct")),
+        }
+        params.append(row)
+
+    if not params:
+        return
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO forecast_metrics (
+                    run_id, sku, competitor_id, horizon, prediction, last_price,
+                    n_samples, alpha, cv_mae, cv_rmse, cv_r2, baseline_mae,
+                    confidence, reliable, pred_diff, pred_diff_pct
+                ) VALUES (
+                    :run_id, :sku, :competitor_id, :horizon, :prediction, :last_price,
+                    :n_samples, :alpha, :cv_mae, :cv_rmse, :cv_r2, :baseline_mae,
+                    :confidence, :reliable, :pred_diff, :pred_diff_pct
+                )
+                """
+            ),
+            params,
+        )
+
+
 def main():
     cfg = Config()
     engine = get_engine()
+    # gate the run only if there are new data
+    # the run is skipped if the elapsed time is less than 12 hours and the number of new rows is less than 100
+    # the guard is to prevent the run from being run too frequently
+    MIN_ELAPSED_MIN = int(os.getenv("GUARD_MIN_ELAPSED_MIN", "720"))   # 12h
+    MIN_NEW_ROWS = int(os.getenv("GUARD_MIN_NEW_ROWS", "100")) # 100 new rows
+
+    with engine.connect() as conn:
+        last_run_ts = conn.execute(text("SELECT MAX(finished_at) FROM price_adjustment_runs")).scalar()
+        if last_run_ts is not None:
+            elapsed_min = conn.execute(
+                text("SELECT EXTRACT(EPOCH FROM (NOW() - MAX(finished_at))) / 60.0 FROM price_adjustment_runs")
+            ).scalar() or 0.0
+            new_rows = conn.execute(
+                text("SELECT COUNT(*) FROM competitor_price_history WHERE collection_timestamp > (SELECT MAX(finished_at) FROM price_adjustment_runs)")
+            ).scalar() or 0
+            if elapsed_min < MIN_ELAPSED_MIN and new_rows < MIN_NEW_ROWS:
+                print({"skip": True, "reason": "guard", "elapsed_min": elapsed_min, "new_rows": new_rows})
+                return
+
     skus = fetch_active_skus(engine)
     run_id = create_run(engine, cfg, candidates_count=len(skus))
 
@@ -306,6 +410,8 @@ def main():
     )
     Client(cluster)
 
+    forecasts = []  # collect forecasts for all SKUs
+
     tasks = []
     for sku in skus:
         feat = load_features(engine, sku)
@@ -313,16 +419,17 @@ def main():
             continue
         # attach demand baseline from recent behavior over the last 60 minutes
         try:
-            feat["demand_baseline"] = load_demand_baseline(engine, sku)
+            feat["demand_baseline"] = load_demand_baseline(engine, sku, cfg.demand_lookback_minutes)
         except Exception:
             feat["demand_baseline"] = 1.0
 
         # attach forecasted cheapest (if any, confidence-gated)
         try:
-            fc = get_forecasted_cheapest(engine, sku, cfg.forecast_min_conf)
-            if fc:
-                feat["forecast_cheapest"] = fc["prediction"]
-                feat["forecast_conf"] = fc.get("confidence", 0.0)
+            cheap_forecasted_price, forecasts_for_sku = get_forecasted_average(engine, sku, cfg.forecast_lookback_days)
+            if cheap_forecasted_price:
+                feat["forecast_average_price"] = cheap_forecasted_price["prediction"]
+                feat["forecast_reliability"] = cheap_forecasted_price.get("reliable", False)
+            forecasts.extend(forecasts_for_sku)
         except Exception:
             pass
 
@@ -335,10 +442,14 @@ def main():
     results = list(compute(*tasks)) if tasks else []
     proposals = [r for r in results if r]
 
+    # Store forecast metrics (all forecasts, including unreliable ones) but only the ones with by ml model
+    insert_forecast_metrics(engine, run_id, forecasts)
+
+    # store the proposals and finalize the run
     insert_proposals(engine, run_id, proposals, created_by=cfg.run_created_by)
     finalize_run(engine, run_id, proposed_count=len(proposals))
 
-    print(json.dumps({"run_id": run_id, "candidates": len(skus), "proposals": len(proposals)}))
+    print(json.dumps({"run_id": run_id, "candidates": len(skus), "proposals": len(proposals), "forecasts": len(forecasts)}))
 
 
 if __name__ == "__main__":

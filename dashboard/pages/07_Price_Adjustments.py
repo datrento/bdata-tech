@@ -157,7 +157,7 @@ with st.expander("Runs (recent)", expanded=False):
                 js = x if isinstance(x, dict) else json.loads(x)
             except Exception:
                 return str(x)
-            keys = ["price_grid_pct", "target_undercut_pct", "gap_tolerance_pct", "forecast_min_conf"]
+            keys = ["price_grid_pct", "target_undercut_pct", "gap_tolerance_pct"]
             parts = [f"{k}={js.get(k)}" for k in keys if k in js]
             return ", ".join(parts)
         runs_disp["params"] = runs_disp["parameters"].apply(_params_to_str)
@@ -169,6 +169,135 @@ with st.expander("Runs (recent)", expanded=False):
 with st.expander("Applied (last 24h)", expanded=False):
     st.dataframe(hist24, use_container_width=True, hide_index=True)
 
+
+
+# ML performance: forecast vs baseline
+@st.cache_data(ttl=60)
+def load_forecast_metrics_all(limit: int = 50000) -> pd.DataFrame:
+    q = text(
+        """
+        SELECT
+          sku,
+          competitor_id,
+          horizon,
+          prediction,
+          last_price,
+          n_samples,
+          alpha,
+          cv_mae,
+          cv_rmse,
+          cv_r2,
+          baseline_mae,
+          confidence,
+          reliable,
+          created_at
+        FROM forecast_metrics
+        WHERE n_samples > 0
+        ORDER BY created_at DESC
+        LIMIT :lim
+        """
+    )
+    with get_db_connection().connect() as conn:
+        return pd.read_sql(q, conn, params={"lim": int(limit)})
+
+# -----------------------------
+# ML Performance section
+# -----------------------------
+st.divider()
+st.subheader("ML Performance (forecast vs baseline)")
+
+# Load all-time forecast metrics (reliable only)
+fm_all = load_forecast_metrics_all(limit=50000)
+fm = fm_all.copy()
+if not fm.empty:
+    # reliable-only
+    if "reliable" in fm.columns:
+        fm = fm[fm["reliable"].astype(str).isin(["True", "true"]) | (fm["reliable"] == True)]
+    # guard numeric columns
+    for col in ["cv_mae", "baseline_mae"]:
+        if col in fm.columns:
+            fm[col] = pd.to_numeric(fm[col], errors="coerce")
+    # Per SKU/competitor aggregation (recent rows)
+    fm_recent = fm.copy()
+    # KPIs
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    with kpi1:
+        st.metric("Rows (reliable)", len(fm_recent))
+    with kpi2:
+        st.metric("Mean CV MAE", f"{fm_recent['cv_mae'].dropna().mean():.2f}")
+    with kpi3:
+        st.metric("Mean Baseline MAE", f"{fm_recent['baseline_mae'].dropna().mean():.2f}")
+    with kpi4:
+        try:
+            improv = (1 - (fm_recent['cv_mae'] / fm_recent['baseline_mae'])).dropna().mean()
+            st.metric("Avg Improvement vs Baseline", f"{improv*100:.1f}%")
+        except Exception:
+            st.metric("Avg Improvement vs Baseline", "n/a")
+
+    # Per SKU means
+    sku_agg = (
+        fm_recent.groupby('sku', as_index=False)
+        .agg(n_rows=('sku','size'),
+             cv_mae=('cv_mae','mean'),
+             baseline_mae=('baseline_mae','mean'))
+    )
+    sku_agg['improvement'] = (1 - (sku_agg['cv_mae'] / sku_agg['baseline_mae'])) * 100.0
+
+    # Per competitor means
+    comp_agg = (
+        fm_recent.groupby('competitor_id', as_index=False)
+        .agg(n_rows=('competitor_id','size'),
+             cv_mae=('cv_mae','mean'),
+             baseline_mae=('baseline_mae','mean'))
+    )
+    comp_agg['improvement'] = (1 - (comp_agg['cv_mae'] / comp_agg['baseline_mae'])) * 100.0
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.caption("Per SKU (mean over recent rows)")
+        st.dataframe(sku_agg.sort_values('improvement', ascending=False), use_container_width=True, hide_index=True)
+    with c2:
+        st.caption("Per Competitor (mean over recent rows)")
+        st.dataframe(comp_agg.sort_values('improvement', ascending=False), use_container_width=True, hide_index=True)
+else:
+    st.caption("No forecast metrics found in the selected timeframe.")
+
+# -----------------------------
+# Per‑SKU MAE (all time, aggregated over competitors)
+# -----------------------------
+
+@st.cache_data(ttl=60)
+def load_mae_by_sku_all(horizon: int = 1) -> pd.DataFrame:
+    q = text("""
+        SELECT
+          sku,
+          AVG(cv_mae)       AS mean_cv_mae,
+          AVG(baseline_mae) AS mean_baseline_mae
+        FROM forecast_metrics
+        WHERE horizon = :h AND n_samples > 0 AND reliable = TRUE
+        GROUP BY sku
+        ORDER BY sku
+    """)
+    with get_db_connection().connect() as conn:
+        df = pd.read_sql(q, conn, params={"h": int(horizon)})
+    if not df.empty:
+        df["improvement_pct"] = (1 - (df["mean_cv_mae"] / df["mean_baseline_mae"])) * 100.0
+    return df
+
+st.subheader("Per-Product SKUs Mean Absolute Error")
+mae_sku_all = load_mae_by_sku_all(horizon=1)
+if not mae_sku_all.empty:
+    st.dataframe(mae_sku_all, use_container_width=True, hide_index=True)
+    chart_mae = alt.Chart(mae_sku_all).transform_fold(
+        ["mean_cv_mae", "mean_baseline_mae"], as_=["metric", "value"]
+    ).mark_bar().encode(
+        x=alt.X("sku:N", sort="-y", title="SKU"),
+        y=alt.Y("value:Q", title="MAE"),
+        color=alt.Color("metric:N", title="Metric")
+    ).properties(height=320, padding={"left": 24, "right": 24, "top": 16, "bottom": 16})
+    st.altair_chart(chart_mae, use_container_width=True)
+else:
+    st.caption("No forecast metrics available to compute per‑SKU MAE (all time).")
 
 # Drilldown: price comparison for a SKU (our price vs competitors)
 st.markdown("")
@@ -396,7 +525,7 @@ if sku:
 
     chart = None
     if layers:
-        chart = alt.layer(*layers).resolve_scale(y="shared").properties(height=520, title=f"{sku} – Proposed vs Competitors").interactive()
+        chart = alt.layer(*layers).resolve_scale(y="shared").properties(height=520, title=f"{sku} – Proposed vs Competitors", padding={"left": 24, "right": 24, "top": 16, "bottom": 16}).interactive()
         st.altair_chart(chart, use_container_width=True)
 
     st.caption("Recent proposals for this SKU")
